@@ -60,14 +60,14 @@ func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *node) 
 // AddClaim adds a Claim to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt Amount, accepted Height) error {
 	return updateStageNode(ct.stg, name, func(n *node) error {
-		return n.addClaim(NewClaim(op, amt, accepted))
+		return n.addClaim(newClaim(op, amt, accepted))
 	})
 }
 
 // AddSupport adds a Support to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt Amount, accepted Height, supported ClaimID) error {
 	return updateStageNode(ct.stg, name, func(n *node) error {
-		return n.addSupport(NewSupport(op, amt, accepted, supported))
+		return n.addSupport(newSupport(op, amt, accepted, supported))
 	})
 }
 
@@ -89,7 +89,9 @@ func (ct *ClaimTrie) SpendSupport(name string, op wire.OutPoint) error {
 func (ct *ClaimTrie) Traverse(visit merkletrie.Visit, update, valueOnly bool) error {
 	// wrapper function to make sure the node is updated before it's observed externally.
 	fn := func(prefix merkletrie.Key, v merkletrie.Value) error {
-		v.(*node).updateBestClaim(ct.bestBlock)
+		if v != nil {
+			v.(*node).updateBestClaim(ct.bestBlock)
+		}
 		return visit(prefix, v)
 	}
 	return ct.stg.Traverse(fn, update, valueOnly)
@@ -97,6 +99,11 @@ func (ct *ClaimTrie) Traverse(visit merkletrie.Visit, update, valueOnly bool) er
 
 // MerkleHash returns the Merkle Hash of the Stage.
 func (ct *ClaimTrie) MerkleHash() chainhash.Hash {
+	visit := func(prefix merkletrie.Key, v merkletrie.Value) error {
+		v.(*node).updateBestClaim(ct.bestBlock)
+		return nil
+	}
+	ct.Traverse(visit, true, true)
 	return ct.stg.MerkleHash()
 }
 
@@ -133,6 +140,7 @@ func (ct *ClaimTrie) Reset(h Height) error {
 		if meta.Height <= h {
 			ct.head = commit
 			ct.bestBlock = h
+			ct.stg = merkletrie.NewStage(commit.MerkleTrie)
 			return nil
 		}
 	}

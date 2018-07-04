@@ -12,23 +12,24 @@ import (
 
 type node struct {
 	tookover  Height
-	bestClaim *Claim
+	bestClaim *claim
 
-	claims   map[string]*Claim
-	supports map[string]*Support
+	claims   map[string]*claim
+	supports map[string]*support
 }
 
 func newNode() *node {
 	return &node{
-		claims:   map[string]*Claim{},
-		supports: map[string]*Support{},
+		claims:   map[string]*claim{},
+		supports: map[string]*support{},
 	}
 }
 
-func (n *node) addClaim(c *Claim) error {
+func (n *node) addClaim(c *claim) error {
 	if _, ok := n.claims[c.op.String()]; ok {
 		return ErrDuplicate
 	}
+	c.activeAt = calActiveHeight(c.accepted, c.accepted, n.tookover)
 	n.claims[c.op.String()] = c
 	return nil
 }
@@ -51,12 +52,13 @@ func (n *node) removeClaim(op wire.OutPoint) error {
 	return nil
 }
 
-func (n *node) addSupport(s *Support) error {
+func (n *node) addSupport(s *support) error {
 	if _, ok := n.supports[s.op.String()]; ok {
 		return ErrDuplicate
 	}
 	for _, v := range n.claims {
 		if v.id == s.supportedID {
+			s.activeAt = calActiveHeight(s.accepted, s.accepted, n.tookover)
 			s.supportedClaim = v
 			n.supports[s.op.String()] = s
 			return nil
@@ -80,20 +82,20 @@ func (n *node) Hash() chainhash.Hash {
 
 // MarshalJSON customizes JSON marshaling of the Node.
 func (n *node) MarshalJSON() ([]byte, error) {
-	c := make([]*Claim, 0, len(n.claims))
+	c := make([]*claim, 0, len(n.claims))
 	for _, v := range n.claims {
 		c = append(c, v)
 	}
-	s := make([]*Support, 0, len(n.supports))
+	s := make([]*support, 0, len(n.supports))
 	for _, v := range n.supports {
 		s = append(s, v)
 	}
 	return json.Marshal(&struct {
 		Hash      string
 		Tookover  Height
-		BestClaim *Claim
-		Claims    []*Claim
-		Supports  []*Support
+		BestClaim *claim
+		Claims    []*claim
+		Supports  []*support
 	}{
 		Hash:      n.Hash().String(),
 		Tookover:  n.tookover,
@@ -117,17 +119,18 @@ func (n *node) updateEffectiveAmounts(curr Height) {
 		v.effAmt = v.amt
 	}
 	for _, v := range n.supports {
-		if v.ActivateAt(n.bestClaim, curr, n.tookover) <= curr {
+		if v.supportedClaim == n.bestClaim || v.activeAt <= curr {
 			v.supportedClaim.effAmt += v.amt
 		}
 	}
 }
 
 func (n *node) updateBestClaim(curr Height) {
-	findCandiadte := func() *Claim {
+	findCandiadte := func() *claim {
 		candidate := n.bestClaim
 		for _, v := range n.claims {
-			if v.ActivateAt(n.bestClaim, curr, n.tookover) > curr {
+			if v.activeAt > curr {
+				// Accepted claim, but noy activated yet.
 				continue
 			}
 			if candidate == nil || v.effAmt > candidate.effAmt {
@@ -136,15 +139,25 @@ func (n *node) updateBestClaim(curr Height) {
 		}
 		return candidate
 	}
+	takeover := func(candidate *claim) {
+		n.bestClaim = candidate
+		n.tookover = curr
+		for _, v := range n.claims {
+			v.activeAt = calActiveHeight(v.accepted, curr, curr)
+		}
+	}
 	for {
 		n.updateEffectiveAmounts(curr)
 		candidate := findCandiadte()
-		if n.bestClaim == nil || n.bestClaim == candidate {
-			n.bestClaim = candidate
+		if n.bestClaim == nil {
+			takeover(candidate)
+			return
+
+		}
+		if n.bestClaim == candidate {
 			return
 		}
-		n.tookover = curr
-		n.bestClaim = candidate
+		takeover(candidate)
 	}
 }
 
@@ -155,11 +168,11 @@ func (n *node) clone() *node {
 	*clone = *n
 
 	// deep copy of reference and pointer fields.
-	clone.claims = map[string]*Claim{}
+	clone.claims = map[string]*claim{}
 	for k, v := range n.claims {
 		clone.claims[k] = v
 	}
-	clone.supports = map[string]*Support{}
+	clone.supports = map[string]*support{}
 	for k, v := range n.supports {
 		clone.supports[k] = v
 	}
