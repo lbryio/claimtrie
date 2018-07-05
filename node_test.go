@@ -1,12 +1,13 @@
 package claimtrie
 
 import (
-	"crypto/rand"
 	"reflect"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func newHash(s string) *chainhash.Hash {
@@ -15,11 +16,12 @@ func newHash(s string) *chainhash.Hash {
 }
 
 func newOutPoint(idx int) *wire.OutPoint {
-	var h chainhash.Hash
-	if _, err := rand.Read(h[:]); err != nil {
-		return nil
-	}
-	return wire.NewOutPoint(&h, uint32(idx))
+	// var h chainhash.Hash
+	// if _, err := rand.Read(h[:]); err != nil {
+	// 	return nil
+	// }
+	// return wire.NewOutPoint(&h, uint32(idx))
+	return wire.NewOutPoint(new(chainhash.Hash), uint32(idx))
 }
 
 func Test_calNodeHash(t *testing.T) {
@@ -61,71 +63,212 @@ func Test_calNodeHash(t *testing.T) {
 		})
 	}
 }
-func Test_BestClaim(t *testing.T) {
-	cA := newClaim(*newOutPoint(1), 0, 0)
-	cB := newClaim(*newOutPoint(2), 0, 0)
-	cC := newClaim(*newOutPoint(3), 0, 0)
-	cD := newClaim(*newOutPoint(4), 0, 0)
 
-	s1 := newSupport(*newOutPoint(91), 0, 0, cA.id)
+var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 *Claim
+var s1, s2, s3, s4, s5, s6, s7, s8, s9, s10 *Support
 
-	var n *node
-	type operation int
-	const (
-		opReset = 1 << iota
-		opAddClaim
-		opRemoveClaim
-		opAddSupport
-		opRemoveSupport
-		opCheck
-	)
-	tests := []struct {
-		name    string
-		op      operation
-		claim   *claim
-		support *support
-		amount  Amount
-		curr    Height
-		want    *claim
-	}{
-		{name: "0-0", op: opReset},
-		{name: "0-1", op: opAddClaim, claim: cA, amount: 10, curr: 13, want: cA},                  // A(10) is controlling
-		{name: "0-2", op: opAddClaim, claim: cB, amount: 20, curr: 1001, want: cA},                // A(10) is controlling, B(20) is accepted. Act(B) = 1001 + (1001-13)/32 = 1031
-		{name: "0-3", op: opAddSupport, claim: cA, support: s1, amount: 14, curr: 1010, want: cA}, // A(10+14) is controlling, B(20) is accepted.
-		{name: "0-4", op: opAddClaim, claim: cC, amount: 50, curr: 1020, want: cA},                // A(10+14) is controlling, B(20) is accepted, C(50) is accepted. Act(C) = 1020 + (1020-13)/32 = 1051
-		{name: "0-5", op: opCheck, curr: 1031, want: cA},                                          // A(10+14) is controlling, B(20) is active, C(50) is accepted.
-		{name: "0-6", op: opAddClaim, claim: cD, amount: 300, curr: 1040, want: cA},               // A(10+14) is controlling, B(20) is active, C(50) is accepted, D(300) is accepted. Act(C) = 1040 + (1040-13)/32 = 1072
-		{name: "0-7", op: opCheck, curr: 1051, want: cD},                                          // A(10+14) is active, B(20) is active, C(50) is active, D(300) is controlling.
+func Test_History1(t *testing.T) {
+
+	proportionalDelayFactor = 1
+	n := NewNode()
+
+	// no competing bids
+	test1 := func() {
+		c1, _ = n.addClaim(*newOutPoint(1), 1)
+		n.IncrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
 	}
 
+	// there is a competing bid inserted same height
+	test2 := func() {
+		n.addClaim(*newOutPoint(2), 1)
+		c3, _ = n.addClaim(*newOutPoint(3), 2)
+		n.IncrementBlock(1)
+		assert.Equal(t, c3, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+
+	}
+	// make two claims , one older
+	test3 := func() {
+		c4, _ = n.addClaim(*newOutPoint(4), 1)
+		n.IncrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+		n.addClaim(*newOutPoint(5), 1)
+		n.IncrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+		n.IncrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+		n.DecrementBlock(1)
+
+		assert.Equal(t, c4, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// check claim takeover
+	test4 := func() {
+		c6, _ = n.addClaim(*newOutPoint(6), 1)
+		n.IncrementBlock(10)
+		assert.Equal(t, c6, n.BestClaim())
+
+		c7, _ = n.addClaim(*newOutPoint(7), 2)
+		n.IncrementBlock(1)
+		assert.Equal(t, c6, n.BestClaim())
+		n.IncrementBlock(10)
+		assert.Equal(t, c7, n.BestClaim())
+
+		n.DecrementBlock(10)
+		assert.Equal(t, c6, n.BestClaim())
+		n.DecrementBlock(10)
+		assert.Equal(t, c6, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// spending winning claim will make losing active claim winner
+	test5 := func() {
+		c1, _ = n.addClaim(*newOutPoint(1), 2)
+		c2, _ = n.addClaim(*newOutPoint(2), 1)
+		n.IncrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+		n.removeClaim(c1.op)
+		n.IncrementBlock(1)
+		assert.Equal(t, c2, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// spending winning claim will make inactive claim winner
+	test6 := func() {
+		c3, _ = n.addClaim(*newOutPoint(3), 2)
+		n.IncrementBlock(10)
+		assert.Equal(t, c3, n.BestClaim())
+
+		c4, _ = n.addClaim(*newOutPoint(4), 2)
+		n.IncrementBlock(1)
+		assert.Equal(t, c3, n.BestClaim())
+		n.removeClaim(c3.op)
+		n.IncrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c3, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Equal(t, c3, n.BestClaim())
+		n.DecrementBlock(10)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// spending winning claim will empty out claim trie
+	test7 := func() {
+		c5, _ = n.addClaim(*newOutPoint(5), 2)
+		n.IncrementBlock(1)
+		assert.Equal(t, c5, n.BestClaim())
+		n.removeClaim(c5.op)
+		n.IncrementBlock(1)
+		assert.NotEqual(t, c5, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c5, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// check claim with more support wins
+	test8 := func() {
+		c1, _ = n.addClaim(*newOutPoint(1), 2)
+		c2, _ = n.addClaim(*newOutPoint(2), 1)
+		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
+		s2, _ = n.addSupport(*newOutPoint(12), 10, c2.id)
+		n.IncrementBlock(1)
+		assert.Equal(t, c2, n.BestClaim())
+		assert.Equal(t, Amount(11), n.BestClaim().effAmt)
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+	// check support delay
+	test9 := func() {
+		c3, _ = n.addClaim(*newOutPoint(3), 1)
+		c4, _ = n.addClaim(*newOutPoint(4), 2)
+		n.IncrementBlock(10)
+		assert.Equal(t, c4, n.BestClaim())
+		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		s4, _ = n.addSupport(*newOutPoint(14), 10, c3.id)
+		n.IncrementBlock(10)
+		assert.Equal(t, c4, n.BestClaim())
+		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		n.IncrementBlock(1)
+		assert.Equal(t, c3, n.BestClaim())
+		assert.Equal(t, Amount(11), n.BestClaim().effAmt)
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c4, n.BestClaim())
+		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		n.DecrementBlock(10)
+		assert.Equal(t, c4, n.BestClaim())
+		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		n.DecrementBlock(10)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// supporting and abandoing on the same block will cause it to crash
+	test10 := func() {
+		c1, _ = n.addClaim(*newOutPoint(1), 2)
+		n.IncrementBlock(1)
+		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
+		n.removeClaim(c1.op)
+		n.IncrementBlock(1)
+		assert.NotEqual(t, c1, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+
+	// support on abandon2
+	test11 := func() {
+		c1, _ = n.addClaim(*newOutPoint(1), 2)
+		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
+		n.IncrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+
+		//abandoning a support and abandoing claim on the same block will cause it to crash
+		n.removeClaim(c1.op)
+		n.removeSupport(s1.op)
+		n.IncrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+
+		n.DecrementBlock(1)
+		assert.Equal(t, c1, n.BestClaim())
+		n.DecrementBlock(1)
+		assert.Nil(t, n.BestClaim())
+	}
+	tests := []func(){
+		test1,
+		test2,
+		test3,
+		test4,
+		test5,
+		test6,
+		test7,
+		test8,
+		test9,
+		test10,
+		test11,
+	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			switch tt.op {
-			case opReset:
-				n = newNode()
-			case opAddClaim:
-				tt.claim.amt = tt.amount
-				tt.claim.accepted = tt.curr
-				err = n.addClaim(tt.claim)
-			case opRemoveClaim:
-				err = n.removeClaim(tt.claim.op)
-			case opAddSupport:
-				tt.support.accepted = tt.curr
-				tt.support.amt = tt.amount
-				tt.support.supportedID = tt.claim.id
-				err = n.addSupport(tt.support)
-			case opRemoveSupport:
-			}
-			if err != nil {
-				t.Errorf("BestClaim() failed, err: %s", err)
-			}
-			n.updateBestClaim(tt.curr)
-			got := n.bestClaim
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("BestClaim() = %d, want %d", got.op.Index, tt.want.op.Index)
-			}
-		})
-
+		tt()
 	}
+	_ = []func(){test1, test2, test3, test4, test5, test6, test7, test8, test9, test10, test11}
 }

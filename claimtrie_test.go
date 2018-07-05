@@ -1,12 +1,12 @@
 package claimtrie
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
+// pending ...
 func TestClaimTrie_Commit(t *testing.T) {
 	ct := New()
 
@@ -33,7 +33,7 @@ func TestClaimTrie_Commit(t *testing.T) {
 				ct.AddClaim("HELLO", *newOutPoint(0), tt.amt, tt.curr)
 			}
 			ct.Commit(tt.curr)
-			fmt.Printf("ct.Merkle[%2d]: %s, amt: %d\n", ct.BestBlock(), ct.MerkleHash(), tt.amt)
+			// fmt.Printf("ct.Merkle[%2d]: %s, amt: %d\n", ct.BestBlock(), ct.MerkleHash(), tt.amt)
 		})
 	}
 }

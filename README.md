@@ -72,4 +72,4 @@ Our PGP key is [here](https://keybase.io/lbry/key.asc) if you need it.
 
 ## Contact
 
-The primary contact for this project is [@roylee17](https://github.com/roylee) (roylee@lbry.io)
+The primary contact for this project is [@roylee17](https://github.com/roylee17) (roylee@lbry.io)

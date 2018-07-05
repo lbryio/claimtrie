@@ -1,112 +1,274 @@
 package claimtrie
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lbryio/claimtrie/memento"
 )
 
-type node struct {
-	tookover  Height
-	bestClaim *claim
+// Amount ...
+type Amount int64
 
-	claims   map[string]*claim
-	supports map[string]*support
+// Height ...
+type Height int64
+
+// Node ...
+type Node struct {
+	memento.Memento
+
+	height     Height
+	bestClaims map[Height]*Claim
+	claims     map[wire.OutPoint]*Claim
+	supports   map[wire.OutPoint]*Support
 }
 
-func newNode() *node {
-	return &node{
-		claims:   map[string]*claim{},
-		supports: map[string]*support{},
+// NewNode ...
+func NewNode() *Node {
+	return &Node{
+		Memento:    memento.Memento{},
+		bestClaims: map[Height]*Claim{0: nil},
+		claims:     map[wire.OutPoint]*Claim{},
+		supports:   map[wire.OutPoint]*Support{},
 	}
 }
 
-func (n *node) addClaim(c *claim) error {
-	if _, ok := n.claims[c.op.String()]; ok {
-		return ErrDuplicate
+// BestClaim ...
+func (n *Node) BestClaim() *Claim {
+	var latest Height
+	for k := range n.bestClaims {
+		if k > latest {
+			latest = k
+		}
 	}
-	c.activeAt = calActiveHeight(c.accepted, c.accepted, n.tookover)
-	n.claims[c.op.String()] = c
+	return n.bestClaims[latest]
+}
+
+// Tookover ...
+func (n *Node) Tookover() Height {
+	var latest Height
+	for k := range n.bestClaims {
+		if k > latest {
+			latest = k
+		}
+	}
+	return latest
+}
+
+// IncrementBlock ...
+func (n *Node) IncrementBlock(h Height) error {
+	if h < 0 {
+		return ErrInvalidHeight
+	}
+	for i := Height(0); i < h; i++ {
+		n.height++
+		n.processBlock()
+		n.Commit()
+	}
 	return nil
 }
 
-func (n *node) removeClaim(op wire.OutPoint) error {
-	c, ok := n.claims[op.String()]
+// DecrementBlock ...
+func (n *Node) DecrementBlock(h Height) error {
+	if h < 0 {
+		return ErrInvalidHeight
+	}
+	for i := Height(0); i < h; i++ {
+		n.height--
+		n.Rollback()
+	}
+	return nil
+}
+
+func (n *Node) addClaim(op wire.OutPoint, amt Amount) (*Claim, error) {
+	c := &Claim{
+		op:       op,
+		id:       NewClaimID(op),
+		amt:      amt,
+		accepted: n.height + 1,
+		activeAt: n.height + 1,
+	}
+	if n.BestClaim() != nil {
+		c.activeAt = calActiveHeight(c.accepted, c.accepted, n.Tookover())
+	}
+
+	n.Execute(cmdAddClaim{node: n, claim: c})
+	return c, nil
+}
+
+func (n *Node) removeClaim(op wire.OutPoint) error {
+	c, ok := n.claims[op]
 	if !ok {
 		return ErrNotFound
 	}
-	delete(n.claims, op.String())
-	if n.bestClaim == c {
-		n.bestClaim = nil
+	n.Execute(cmdRemoveClaim{node: n, claim: c})
+
+	if n.BestClaim() != c {
+		return nil
 	}
-	for _, v := range n.supports {
-		if c.id == v.supportedID {
-			v.supportedClaim = nil
-			return nil
-		}
-	}
+	n.Execute(updateNodeBestClaim{node: n, height: n.Tookover(), old: c, new: nil})
+	n.updateActiveHeights()
 	return nil
 }
 
-func (n *node) addSupport(s *support) error {
-	if _, ok := n.supports[s.op.String()]; ok {
-		return ErrDuplicate
+func (n *Node) addSupport(op wire.OutPoint, amt Amount, supported ClaimID) (*Support, error) {
+	s := &Support{
+		op:          op,
+		amt:         amt,
+		supportedID: supported,
+		accepted:    n.height + 1,
+		activeAt:    n.height + 1,
 	}
-	for _, v := range n.claims {
-		if v.id == s.supportedID {
-			s.activeAt = calActiveHeight(s.accepted, s.accepted, n.tookover)
-			s.supportedClaim = v
-			n.supports[s.op.String()] = s
-			return nil
+	if n.BestClaim() == nil || n.BestClaim().op != op {
+		s.activeAt = calActiveHeight(s.accepted, s.accepted, n.Tookover())
+	}
+
+	for _, c := range n.claims {
+		if c.id != supported {
+			continue
 		}
+		n.Execute(cmdAddSupport{node: n, support: s})
+		return s, nil
 	}
-	return ErrNotFound
+
+	// Is supporting an non-existing Claim aceepted?
+	return nil, ErrNotFound
 }
 
-func (n *node) removeSupport(op wire.OutPoint) error {
-	if _, ok := n.supports[op.String()]; !ok {
+func (n *Node) removeSupport(op wire.OutPoint) error {
+	s, ok := n.supports[op]
+	if !ok {
 		return ErrNotFound
 	}
-	delete(n.supports, op.String())
+	n.Execute(cmdRemoveSupport{node: n, support: s})
 	return nil
+}
+
+func (n *Node) updateEffectiveAmounts() {
+	for _, c := range n.claims {
+		c.effAmt = c.amt
+		if c.activeAt > n.height {
+			c.effAmt = 0
+			continue
+		}
+		for _, s := range n.supports {
+			if s.activeAt > n.height || s.supportedID != c.id {
+				continue
+			}
+			c.effAmt += s.amt
+		}
+	}
+}
+
+func (n *Node) updateActiveHeights() {
+	for _, v := range n.claims {
+		if old, new := v.activeAt, calActiveHeight(v.accepted, n.height, n.height); old != new {
+			n.Execute(cmdUpdateClaimActiveHeight{claim: v, old: old, new: new})
+		}
+	}
+	for _, v := range n.supports {
+		if old, new := v.activeAt, calActiveHeight(v.accepted, n.height, n.height); old != new {
+			n.Execute(cmdUpdateSupportActiveHeight{support: v, old: old, new: new})
+		}
+	}
+}
+func (n *Node) processBlock() {
+	for {
+		candidate := findCandiadte(n)
+		if n.BestClaim() == candidate {
+			return
+		}
+		n.Execute(updateNodeBestClaim{node: n, height: n.height, old: n.bestClaims[n.height], new: candidate})
+		n.updateActiveHeights()
+	}
+}
+
+func (n *Node) findNextUpdateHeights() Height {
+	next := Height(math.MaxInt64)
+	for _, v := range n.claims {
+		if v.activeAt > n.height && v.activeAt < next {
+			next = v.activeAt
+		}
+	}
+	for _, v := range n.supports {
+		if v.activeAt > n.height && v.activeAt < next {
+			next = v.activeAt
+		}
+	}
+	if next == Height(math.MaxInt64) {
+		return n.height
+	}
+	return next
 }
 
 // Hash calculates the Hash value based on the OutPoint and at which height it tookover.
-func (n *node) Hash() chainhash.Hash {
-	return calNodeHash(n.bestClaim.op, n.tookover)
+func (n *Node) Hash() chainhash.Hash {
+	if n.BestClaim() == nil {
+		return chainhash.Hash{}
+	}
+	return calNodeHash(n.BestClaim().op, n.Tookover())
 }
 
 // MarshalJSON customizes JSON marshaling of the Node.
-func (n *node) MarshalJSON() ([]byte, error) {
-	c := make([]*claim, 0, len(n.claims))
+func (n *Node) MarshalJSON() ([]byte, error) {
+	c := make([]*Claim, 0, len(n.claims))
 	for _, v := range n.claims {
 		c = append(c, v)
 	}
-	s := make([]*support, 0, len(n.supports))
+	s := make([]*Support, 0, len(n.supports))
 	for _, v := range n.supports {
 		s = append(s, v)
 	}
 	return json.Marshal(&struct {
+		Height    Height
 		Hash      string
 		Tookover  Height
-		BestClaim *claim
-		Claims    []*claim
-		Supports  []*support
+		BestClaim *Claim
+		Claims    []*Claim
+		Supports  []*Support
 	}{
+		Height:    n.height,
 		Hash:      n.Hash().String(),
-		Tookover:  n.tookover,
-		BestClaim: n.bestClaim,
+		Tookover:  n.Tookover(),
+		BestClaim: n.BestClaim(),
 		Claims:    c,
 		Supports:  s,
 	})
 }
 
 // String implements Stringer interface.
-func (n *node) String() string {
+func (n *Node) String() string {
+	if dbg {
+		w := bytes.NewBuffer(nil)
+		fmt.Fprintf(w, "H: %2d   BestClaims: ", n.height)
+		for k, v := range n.bestClaims {
+			if v == nil {
+				fmt.Fprintf(w, "{%d, nil}, ", k)
+				continue
+			}
+			fmt.Fprintf(w, "{%d, %d}, ", k, v.op.Index)
+		}
+		fmt.Fprintf(w, "\n")
+		for _, v := range n.claims {
+			fmt.Fprintf(w, "\n    %v", v)
+			if v == n.BestClaim() {
+				fmt.Fprintf(w, " <B> ")
+			}
+		}
+		for _, v := range n.supports {
+			fmt.Fprintf(w, "\n   %v", v)
+		}
+		fmt.Fprintf(w, "\n")
+		return w.String()
+
+	}
 	b, err := json.MarshalIndent(n, "", "  ")
 	if err != nil {
 		panic("can't marshal Node")
@@ -114,69 +276,36 @@ func (n *node) String() string {
 	return string(b)
 }
 
-func (n *node) updateEffectiveAmounts(curr Height) {
+// func (n *Node) clone() *Node {
+// 	clone := NewNode()
+
+// 	// shallow copy of value fields.
+// 	*clone = *n
+
+// 	// deep copy of reference and pointer fields.
+// 	clone.claims = map[wire.OutPoint]*Claim{}
+// 	for k, v := range n.claims {
+// 		clone.claims[k] = v
+// 	}
+// 	clone.supports = map[wire.OutPoint]*Support{}
+// 	for k, v := range n.supports {
+// 		clone.supports[k] = v
+// 	}
+// 	return clone
+// }
+
+func findCandiadte(n *Node) *Claim {
+	n.updateEffectiveAmounts()
+	var candidate *Claim
 	for _, v := range n.claims {
-		v.effAmt = v.amt
-	}
-	for _, v := range n.supports {
-		if v.supportedClaim == n.bestClaim || v.activeAt <= curr {
-			v.supportedClaim.effAmt += v.amt
+		if v.activeAt > n.height {
+			continue
+		}
+		if candidate == nil || v.effAmt > candidate.effAmt {
+			candidate = v
 		}
 	}
-}
-
-func (n *node) updateBestClaim(curr Height) {
-	findCandiadte := func() *claim {
-		candidate := n.bestClaim
-		for _, v := range n.claims {
-			if v.activeAt > curr {
-				// Accepted claim, but noy activated yet.
-				continue
-			}
-			if candidate == nil || v.effAmt > candidate.effAmt {
-				candidate = v
-			}
-		}
-		return candidate
-	}
-	takeover := func(candidate *claim) {
-		n.bestClaim = candidate
-		n.tookover = curr
-		for _, v := range n.claims {
-			v.activeAt = calActiveHeight(v.accepted, curr, curr)
-		}
-	}
-	for {
-		n.updateEffectiveAmounts(curr)
-		candidate := findCandiadte()
-		if n.bestClaim == nil {
-			takeover(candidate)
-			return
-
-		}
-		if n.bestClaim == candidate {
-			return
-		}
-		takeover(candidate)
-	}
-}
-
-func (n *node) clone() *node {
-	clone := newNode()
-
-	// shallow copy of value fields.
-	*clone = *n
-
-	// deep copy of reference and pointer fields.
-	clone.claims = map[string]*claim{}
-	for k, v := range n.claims {
-		clone.claims[k] = v
-	}
-	clone.supports = map[string]*support{}
-	for k, v := range n.supports {
-		clone.supports[k] = v
-	}
-	return clone
+	return candidate
 }
 
 func calNodeHash(op wire.OutPoint, tookover Height) chainhash.Hash {
@@ -195,4 +324,14 @@ func calNodeHash(op wire.OutPoint, tookover Height) chainhash.Hash {
 	h = append(h, heightHash[:]...)
 
 	return chainhash.DoubleHashH(h)
+}
+
+var proportionalDelayFactor = Height(32)
+
+func calActiveHeight(accepted, curr, tookover Height) Height {
+	delay := (curr - tookover) / proportionalDelayFactor
+	if delay > 4032 {
+		delay = 4032
+	}
+	return accepted + delay
 }

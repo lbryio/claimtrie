@@ -1,23 +1,17 @@
 package claimtrie
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
 	"github.com/btcsuite/btcd/wire"
 )
 
-// newClaim ...
-func newClaim(op wire.OutPoint, amt Amount, accepted Height) *claim {
-	return &claim{
-		op:       op,
-		id:       NewClaimID(op),
-		amt:      amt,
-		accepted: accepted,
-	}
-}
+var dbg bool
 
-type claim struct {
+// Claim ...
+type Claim struct {
 	op       wire.OutPoint
 	id       ClaimID
 	amt      Amount
@@ -26,8 +20,31 @@ type claim struct {
 	activeAt Height
 }
 
+func (c *Claim) String() string {
+	if dbg {
+		w := bytes.NewBuffer(nil)
+		fmt.Fprintf(w, "C%-3d amt: %2d, effamt: %v, accepted: %2d, active: %2d, id: %s", c.op.Index, c.amt, c.effAmt, c.accepted, c.activeAt, c.id)
+		return w.String()
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		fmt.Printf("can't marshal, err :%s", err)
+	}
+	return string(b)
+}
+
+// Support ...
+type Support struct {
+	op       wire.OutPoint
+	amt      Amount
+	accepted Height
+	activeAt Height
+
+	supportedID ClaimID
+}
+
 // MarshalJSON customizes the representation of JSON.
-func (c *claim) MarshalJSON() ([]byte, error) {
+func (c *Claim) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		OutPoint        string
 		ClaimID         string
@@ -45,35 +62,8 @@ func (c *claim) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (c *claim) String() string {
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		fmt.Printf("can't marshal, err :%s", err)
-	}
-	return string(b)
-}
-
-func newSupport(op wire.OutPoint, amt Amount, accepted Height, supported ClaimID) *support {
-	return &support{
-		op:          op,
-		amt:         amt,
-		accepted:    accepted,
-		supportedID: supported,
-	}
-}
-
-type support struct {
-	op       wire.OutPoint
-	amt      Amount
-	accepted Height
-	activeAt Height
-
-	supportedID    ClaimID
-	supportedClaim *claim
-}
-
 // MarshalJSON ...
-func (s *support) MarshalJSON() ([]byte, error) {
+func (s *Support) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		OutPoint         string
 		SupportedClaimID string
@@ -89,7 +79,12 @@ func (s *support) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (s *support) String() string {
+func (s *Support) String() string {
+	if dbg {
+		w := bytes.NewBuffer(nil)
+		fmt.Fprintf(w, "S%-3d amt: %2d,            accepted: %2d, active: %2d, id: %s", s.op.Index, s.amt, s.accepted, s.activeAt, s.supportedID)
+		return w.String()
+	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		fmt.Printf("can't marshal, err :%s", err)

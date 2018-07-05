@@ -34,12 +34,3 @@ type ClaimID [20]byte
 func (id ClaimID) String() string {
 	return hex.EncodeToString(id[:])
 }
-
-func calActiveHeight(accepted, curr, tookover Height) Height {
-	factor := Height(32)
-	delay := (curr - tookover) / factor
-	if delay > 4032 {
-		delay = 4032
-	}
-	return accepted + delay
-}

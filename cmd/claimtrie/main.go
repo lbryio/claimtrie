@@ -128,6 +128,9 @@ func newOutPoint(s string) (*wire.OutPoint, error) {
 		return wire.NewOutPoint(&h, uint32(h[0])), nil
 	}
 	fields := strings.Split(s, ":")
+	if len(fields) != 2 {
+		return nil, fmt.Errorf("invalid outpoint format (HASH:INDEX)")
+	}
 	h, err := chainhash.NewHashFromStr(fields[0])
 	if err != nil {
 		return nil, err
@@ -217,11 +220,13 @@ func cmdShow(c *cli.Context) error {
 	}
 	height := claimtrie.Height(c.Int64("height"))
 	if !c.IsSet("height") {
-		fmt.Printf("<BestBlock: %d>\n", ct.BestBlock())
+		fmt.Printf("<ClaimTrie Height %d>\n", ct.BestBlock())
 		return ct.Traverse(dump, false, !c.Bool("all"))
 	}
+	fmt.Printf("NOTE: peeking to the past is broken for now. Try RESET command instead\n")
 	for commit := ct.Head(); commit != nil; commit = commit.Prev {
 		meta := commit.Meta.(claimtrie.CommitMeta)
+		fmt.Printf("HEAD: %d/%d\n", height, meta.Height)
 		if height == meta.Height {
 			return commit.MerkleTrie.Traverse(dump, false, !c.Bool("all"))
 		}
@@ -251,7 +256,7 @@ func cmdReset(c *cli.Context) error {
 func cmdLog(c *cli.Context) error {
 	commitVisit := func(c *merkletrie.Commit) {
 		meta := c.Meta.(claimtrie.CommitMeta)
-		fmt.Printf("height: %d, commit %s\n\n", meta.Height, c.MerkleTrie.MerkleHash())
+		fmt.Printf("height: %d, commit %s\n", meta.Height, c.MerkleTrie.MerkleHash())
 	}
 
 	fmt.Printf("\n")
