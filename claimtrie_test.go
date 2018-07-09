@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
+
+	"github.com/lbryio/claimtrie/claim"
 )
 
 // pending ...
@@ -12,8 +15,8 @@ func TestClaimTrie_Commit(t *testing.T) {
 
 	tests := []struct {
 		name string
-		curr Height
-		amt  Amount
+		curr claim.Height
+		amt  claim.Amount
 		want chainhash.Hash
 	}{
 		{name: "0-0", curr: 5, amt: 11},
@@ -30,10 +33,19 @@ func TestClaimTrie_Commit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.amt != 0 {
-				ct.AddClaim("HELLO", *newOutPoint(0), tt.amt, tt.curr)
+				ct.AddClaim("HELLO", *newOutPoint(0), tt.amt)
 			}
 			ct.Commit(tt.curr)
 			// fmt.Printf("ct.Merkle[%2d]: %s, amt: %d\n", ct.BestBlock(), ct.MerkleHash(), tt.amt)
 		})
 	}
+}
+
+func newOutPoint(idx int) *wire.OutPoint {
+	// var h chainhash.Hash
+	// if _, err := rand.Read(h[:]); err != nil {
+	// 	return nil
+	// }
+	// return wire.NewOutPoint(&h, uint32(idx))
+	return wire.NewOutPoint(new(chainhash.Hash), uint32(idx))
 }

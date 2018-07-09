@@ -22,7 +22,7 @@ go get -u -v github.com/lbryio/claimtrie
 
 Refer to [claimtrie](https://github.com/lbryio/claimtrie/blob/master/cmd/claimtrie) for an interactive CLI tool.
 
-``` bash
+``` quote
 NAME:
    claimtrie - A CLI tool for ClaimTrie
 

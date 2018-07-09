@@ -1,4 +1,4 @@
-package claimtrie
+package claimnode
 
 import (
 	"reflect"
@@ -6,8 +6,9 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-
 	"github.com/stretchr/testify/assert"
+
+	"github.com/lbryio/claimtrie/claim"
 )
 
 func newHash(s string) *chainhash.Hash {
@@ -27,7 +28,7 @@ func newOutPoint(idx int) *wire.OutPoint {
 func Test_calNodeHash(t *testing.T) {
 	type args struct {
 		op wire.OutPoint
-		h  Height
+		h  claim.Height
 	}
 	tests := []struct {
 		name string
@@ -64,8 +65,8 @@ func Test_calNodeHash(t *testing.T) {
 	}
 }
 
-var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 *Claim
-var s1, s2, s3, s4, s5, s6, s7, s8, s9, s10 *Support
+var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 *claim.Claim
+var s1, s2, s3, s4, s5, s6, s7, s8, s9, s10 *claim.Support
 
 func Test_History1(t *testing.T) {
 
@@ -74,7 +75,7 @@ func Test_History1(t *testing.T) {
 
 	// no competing bids
 	test1 := func() {
-		c1, _ = n.addClaim(*newOutPoint(1), 1)
+		c1, _ = n.AddClaim(*newOutPoint(1), 1)
 		n.IncrementBlock(1)
 		assert.Equal(t, c1, n.BestClaim())
 
@@ -84,8 +85,8 @@ func Test_History1(t *testing.T) {
 
 	// there is a competing bid inserted same height
 	test2 := func() {
-		n.addClaim(*newOutPoint(2), 1)
-		c3, _ = n.addClaim(*newOutPoint(3), 2)
+		n.AddClaim(*newOutPoint(2), 1)
+		c3, _ = n.AddClaim(*newOutPoint(3), 2)
 		n.IncrementBlock(1)
 		assert.Equal(t, c3, n.BestClaim())
 
@@ -95,10 +96,10 @@ func Test_History1(t *testing.T) {
 	}
 	// make two claims , one older
 	test3 := func() {
-		c4, _ = n.addClaim(*newOutPoint(4), 1)
+		c4, _ = n.AddClaim(*newOutPoint(4), 1)
 		n.IncrementBlock(1)
 		assert.Equal(t, c4, n.BestClaim())
-		n.addClaim(*newOutPoint(5), 1)
+		n.AddClaim(*newOutPoint(5), 1)
 		n.IncrementBlock(1)
 		assert.Equal(t, c4, n.BestClaim())
 		n.IncrementBlock(1)
@@ -114,11 +115,11 @@ func Test_History1(t *testing.T) {
 
 	// check claim takeover
 	test4 := func() {
-		c6, _ = n.addClaim(*newOutPoint(6), 1)
+		c6, _ = n.AddClaim(*newOutPoint(6), 1)
 		n.IncrementBlock(10)
 		assert.Equal(t, c6, n.BestClaim())
 
-		c7, _ = n.addClaim(*newOutPoint(7), 2)
+		c7, _ = n.AddClaim(*newOutPoint(7), 2)
 		n.IncrementBlock(1)
 		assert.Equal(t, c6, n.BestClaim())
 		n.IncrementBlock(10)
@@ -134,11 +135,11 @@ func Test_History1(t *testing.T) {
 
 	// spending winning claim will make losing active claim winner
 	test5 := func() {
-		c1, _ = n.addClaim(*newOutPoint(1), 2)
-		c2, _ = n.addClaim(*newOutPoint(2), 1)
+		c1, _ = n.AddClaim(*newOutPoint(1), 2)
+		c2, _ = n.AddClaim(*newOutPoint(2), 1)
 		n.IncrementBlock(1)
 		assert.Equal(t, c1, n.BestClaim())
-		n.removeClaim(c1.op)
+		n.RemoveClaim(c1.OutPoint)
 		n.IncrementBlock(1)
 		assert.Equal(t, c2, n.BestClaim())
 
@@ -150,14 +151,14 @@ func Test_History1(t *testing.T) {
 
 	// spending winning claim will make inactive claim winner
 	test6 := func() {
-		c3, _ = n.addClaim(*newOutPoint(3), 2)
+		c3, _ = n.AddClaim(*newOutPoint(3), 2)
 		n.IncrementBlock(10)
 		assert.Equal(t, c3, n.BestClaim())
 
-		c4, _ = n.addClaim(*newOutPoint(4), 2)
+		c4, _ = n.AddClaim(*newOutPoint(4), 2)
 		n.IncrementBlock(1)
 		assert.Equal(t, c3, n.BestClaim())
-		n.removeClaim(c3.op)
+		n.RemoveClaim(c3.OutPoint)
 		n.IncrementBlock(1)
 		assert.Equal(t, c4, n.BestClaim())
 
@@ -171,10 +172,10 @@ func Test_History1(t *testing.T) {
 
 	// spending winning claim will empty out claim trie
 	test7 := func() {
-		c5, _ = n.addClaim(*newOutPoint(5), 2)
+		c5, _ = n.AddClaim(*newOutPoint(5), 2)
 		n.IncrementBlock(1)
 		assert.Equal(t, c5, n.BestClaim())
-		n.removeClaim(c5.op)
+		n.RemoveClaim(c5.OutPoint)
 		n.IncrementBlock(1)
 		assert.NotEqual(t, c5, n.BestClaim())
 
@@ -186,47 +187,47 @@ func Test_History1(t *testing.T) {
 
 	// check claim with more support wins
 	test8 := func() {
-		c1, _ = n.addClaim(*newOutPoint(1), 2)
-		c2, _ = n.addClaim(*newOutPoint(2), 1)
-		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
-		s2, _ = n.addSupport(*newOutPoint(12), 10, c2.id)
+		c1, _ = n.AddClaim(*newOutPoint(1), 2)
+		c2, _ = n.AddClaim(*newOutPoint(2), 1)
+		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
+		s2, _ = n.AddSupport(*newOutPoint(12), 10, c2.ID)
 		n.IncrementBlock(1)
 		assert.Equal(t, c2, n.BestClaim())
-		assert.Equal(t, Amount(11), n.BestClaim().effAmt)
+		assert.Equal(t, claim.Amount(11), n.BestClaim().EffAmt)
 		n.DecrementBlock(1)
 		assert.Nil(t, n.BestClaim())
 	}
 	// check support delay
 	test9 := func() {
-		c3, _ = n.addClaim(*newOutPoint(3), 1)
-		c4, _ = n.addClaim(*newOutPoint(4), 2)
+		c3, _ = n.AddClaim(*newOutPoint(3), 1)
+		c4, _ = n.AddClaim(*newOutPoint(4), 2)
 		n.IncrementBlock(10)
 		assert.Equal(t, c4, n.BestClaim())
-		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
-		s4, _ = n.addSupport(*newOutPoint(14), 10, c3.id)
+		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
+		s4, _ = n.AddSupport(*newOutPoint(14), 10, c3.ID)
 		n.IncrementBlock(10)
 		assert.Equal(t, c4, n.BestClaim())
-		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
 		n.IncrementBlock(1)
 		assert.Equal(t, c3, n.BestClaim())
-		assert.Equal(t, Amount(11), n.BestClaim().effAmt)
+		assert.Equal(t, claim.Amount(11), n.BestClaim().EffAmt)
 
 		n.DecrementBlock(1)
 		assert.Equal(t, c4, n.BestClaim())
-		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
 		n.DecrementBlock(10)
 		assert.Equal(t, c4, n.BestClaim())
-		assert.Equal(t, Amount(2), n.BestClaim().effAmt)
+		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
 		n.DecrementBlock(10)
 		assert.Nil(t, n.BestClaim())
 	}
 
 	// supporting and abandoing on the same block will cause it to crash
 	test10 := func() {
-		c1, _ = n.addClaim(*newOutPoint(1), 2)
+		c1, _ = n.AddClaim(*newOutPoint(1), 2)
 		n.IncrementBlock(1)
-		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
-		n.removeClaim(c1.op)
+		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
+		n.RemoveClaim(c1.OutPoint)
 		n.IncrementBlock(1)
 		assert.NotEqual(t, c1, n.BestClaim())
 
@@ -238,14 +239,14 @@ func Test_History1(t *testing.T) {
 
 	// support on abandon2
 	test11 := func() {
-		c1, _ = n.addClaim(*newOutPoint(1), 2)
-		s1, _ = n.addSupport(*newOutPoint(11), 1, c1.id)
+		c1, _ = n.AddClaim(*newOutPoint(1), 2)
+		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
 		n.IncrementBlock(1)
 		assert.Equal(t, c1, n.BestClaim())
 
 		//abandoning a support and abandoing claim on the same block will cause it to crash
-		n.removeClaim(c1.op)
-		n.removeSupport(s1.op)
+		n.RemoveClaim(c1.OutPoint)
+		n.RemoveSupport(s1.OutPoint)
 		n.IncrementBlock(1)
 		assert.Nil(t, n.BestClaim())
 

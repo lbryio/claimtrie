@@ -1,4 +1,4 @@
-package claimtrie
+package claim
 
 import (
 	"bytes"
@@ -8,22 +8,29 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
+// Amount ...
+type Amount int64
+
+// Height ...
+type Height int64
+
 var dbg bool
 
 // Claim ...
 type Claim struct {
-	op       wire.OutPoint
-	id       ClaimID
-	amt      Amount
-	effAmt   Amount
-	accepted Height
-	activeAt Height
+	wire.OutPoint
+
+	ID       ID
+	Amt      Amount
+	EffAmt   Amount
+	Accepted Height
+	ActiveAt Height
 }
 
 func (c *Claim) String() string {
 	if dbg {
 		w := bytes.NewBuffer(nil)
-		fmt.Fprintf(w, "C%-3d amt: %2d, effamt: %v, accepted: %2d, active: %2d, id: %s", c.op.Index, c.amt, c.effAmt, c.accepted, c.activeAt, c.id)
+		fmt.Fprintf(w, "C%-3d amt: %2d, effamt: %v, accepted: %2d, active: %2d, id: %s", c.Index, c.Amt, c.EffAmt, c.Accepted, c.ActiveAt, c.ID)
 		return w.String()
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
@@ -35,30 +42,31 @@ func (c *Claim) String() string {
 
 // Support ...
 type Support struct {
-	op       wire.OutPoint
-	amt      Amount
-	accepted Height
-	activeAt Height
+	wire.OutPoint
 
-	supportedID ClaimID
+	Amt      Amount
+	Accepted Height
+	ActiveAt Height
+
+	SupportedID ID
 }
 
 // MarshalJSON customizes the representation of JSON.
 func (c *Claim) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		OutPoint        string
-		ClaimID         string
+		ID              string
 		Amount          Amount
 		EffectiveAmount Amount
 		Accepted        Height
 		ActiveAt        Height
 	}{
-		OutPoint:        c.op.String(),
-		ClaimID:         c.id.String(),
-		Amount:          c.amt,
-		EffectiveAmount: c.effAmt,
-		Accepted:        c.accepted,
-		ActiveAt:        c.activeAt,
+		OutPoint:        c.OutPoint.String(),
+		ID:              c.ID.String(),
+		Amount:          c.Amt,
+		EffectiveAmount: c.EffAmt,
+		Accepted:        c.Accepted,
+		ActiveAt:        c.ActiveAt,
 	})
 }
 
@@ -71,18 +79,18 @@ func (s *Support) MarshalJSON() ([]byte, error) {
 		Accepted         Height
 		ActiveAt         Height
 	}{
-		OutPoint:         s.op.String(),
-		SupportedClaimID: s.supportedID.String(),
-		Amount:           s.amt,
-		Accepted:         s.accepted,
-		ActiveAt:         s.activeAt,
+		OutPoint:         s.OutPoint.String(),
+		SupportedClaimID: s.SupportedID.String(),
+		Amount:           s.Amt,
+		Accepted:         s.Accepted,
+		ActiveAt:         s.ActiveAt,
 	})
 }
 
 func (s *Support) String() string {
 	if dbg {
 		w := bytes.NewBuffer(nil)
-		fmt.Fprintf(w, "S%-3d amt: %2d,            accepted: %2d, active: %2d, id: %s", s.op.Index, s.amt, s.accepted, s.activeAt, s.supportedID)
+		fmt.Fprintf(w, "S%-3d amt: %2d,            accepted: %2d, active: %2d, id: %s", s.Index, s.Amt, s.Accepted, s.ActiveAt, s.SupportedID)
 		return w.String()
 	}
 	b, err := json.MarshalIndent(s, "", "  ")

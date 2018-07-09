@@ -6,6 +6,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 
+	"github.com/lbryio/claimtrie/claim"
+	"github.com/lbryio/claimtrie/claimnode"
+
 	"github.com/lbryio/merkletrie"
 )
 
@@ -13,7 +16,7 @@ import (
 type ClaimTrie struct {
 
 	// The highest block number commited to the ClaimTrie.
-	bestBlock Height
+	bestBlock claim.Height
 
 	// Immutable linear history.
 	head *merkletrie.Commit
@@ -22,12 +25,12 @@ type ClaimTrie struct {
 	stg *merkletrie.Stage
 
 	// pending keeps track update for future block height.
-	pending map[Height][]string
+	pending map[claim.Height][]string
 }
 
 // CommitMeta implements merkletrie.CommitMeta with commit-specific metadata.
 type CommitMeta struct {
-	Height Height
+	Height claim.Height
 }
 
 // New returns a ClaimTrie.
@@ -36,20 +39,20 @@ func New() *ClaimTrie {
 	return &ClaimTrie{
 		head:    merkletrie.NewCommit(nil, CommitMeta{0}, mt),
 		stg:     merkletrie.NewStage(mt),
-		pending: map[Height][]string{},
+		pending: map[claim.Height][]string{},
 	}
 }
 
-func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *Node) error) error {
+func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *claimnode.Node) error) error {
 	v, err := stg.Get(merkletrie.Key(name))
 	if err != nil && err != merkletrie.ErrKeyNotFound {
 		return err
 	}
-	var n *Node
+	var n *claimnode.Node
 	if v == nil {
-		n = NewNode()
+		n = claimnode.NewNode()
 	} else {
-		n = v.(*Node)
+		n = v.(*claimnode.Node)
 	}
 	if err = modifier(n); err != nil {
 		return err
@@ -58,10 +61,12 @@ func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *Node) 
 }
 
 // AddClaim adds a Claim to the Stage of ClaimTrie.
-func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt Amount, accepted Height) error {
-	return updateStageNode(ct.stg, name, func(n *Node) error {
-		n.IncrementBlock(ct.bestBlock - n.height)
-		_, err := n.addClaim(op, amt)
+func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt claim.Amount) error {
+	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
+		if err := n.IncrementBlock(claim.Height(ct.bestBlock) - n.Height()); err != nil {
+			return err
+		}
+		_, err := n.AddClaim(op, claim.Amount(amt))
 		next := ct.bestBlock + 1
 		ct.pending[next] = append(ct.pending[next], name)
 		return err
@@ -69,9 +74,9 @@ func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt Amount, accepte
 }
 
 // AddSupport adds a Support to the Stage of ClaimTrie.
-func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt Amount, accepted Height, supported ClaimID) error {
-	return updateStageNode(ct.stg, name, func(n *Node) error {
-		_, err := n.addSupport(op, amt, supported)
+func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt claim.Amount, supported claim.ID) error {
+	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
+		_, err := n.AddSupport(op, amt, supported)
 		next := ct.bestBlock + 1
 		ct.pending[next] = append(ct.pending[next], name)
 		return err
@@ -80,19 +85,19 @@ func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt Amount, accep
 
 // SpendClaim removes a Claim in the Stage.
 func (ct *ClaimTrie) SpendClaim(name string, op wire.OutPoint) error {
-	return updateStageNode(ct.stg, name, func(n *Node) error {
+	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
 		next := ct.bestBlock + 1
 		ct.pending[next] = append(ct.pending[next], name)
-		return n.removeClaim(op)
+		return n.RemoveClaim(op)
 	})
 }
 
 // SpendSupport removes a Support in the Stage.
 func (ct *ClaimTrie) SpendSupport(name string, op wire.OutPoint) error {
-	return updateStageNode(ct.stg, name, func(n *Node) error {
+	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
 		next := ct.bestBlock + 1
 		ct.pending[next] = append(ct.pending[next], name)
-		return n.removeSupport(op)
+		return n.RemoveSupport(op)
 	})
 }
 
@@ -107,27 +112,27 @@ func (ct *ClaimTrie) MerkleHash() chainhash.Hash {
 }
 
 // BestBlock returns the highest height of blocks commited to the ClaimTrie.
-func (ct *ClaimTrie) BestBlock() Height {
+func (ct *ClaimTrie) BestBlock() claim.Height {
 	return ct.bestBlock
 }
 
 // Commit commits the current Stage into commit database, and updates the BestBlock with the associated height.
 // The height must be higher than the current BestBlock, or ErrInvalidHeight is returned.
-func (ct *ClaimTrie) Commit(h Height) error {
+func (ct *ClaimTrie) Commit(h claim.Height) error {
 	if h <= ct.bestBlock {
 		return ErrInvalidHeight
 	}
 
-	for i := ct.bestBlock + 1; i <= h; i++ {
+	for i := claim.Height(ct.bestBlock) + 1; i <= h; i++ {
 		for _, prefix := range ct.pending[i] {
 			// Brings the value node to date.
-			catchup := func(n *Node) error {
-				if err := n.IncrementBlock(i - n.height); err != nil {
+			catchup := func(n *claimnode.Node) error {
+				if err := n.IncrementBlock(i - n.Height()); err != nil {
 					return err
 				}
 
 				// After the update, the node may subscribe to another pending update.
-				if next := n.findNextUpdateHeights(); next > i {
+				if next := n.FindNextUpdateHeights(); next > i {
 					fmt.Printf("Subscribe pendings for %v to future Height at %d\n", prefix, next)
 					ct.pending[next] = append(ct.pending[next], prefix)
 				}
@@ -151,10 +156,10 @@ func (ct *ClaimTrie) Commit(h Height) error {
 }
 
 // Reset reverts the Stage to a specified commit by height.
-func (ct *ClaimTrie) Reset(h Height) error {
+func (ct *ClaimTrie) Reset(h claim.Height) error {
 	visit := func(prefix merkletrie.Key, value merkletrie.Value) error {
-		n := value.(*Node)
-		return n.DecrementBlock(n.height - h)
+		n := value.(*claimnode.Node)
+		return n.DecrementBlock(n.Height() - claim.Height(h))
 	}
 	if err := ct.stg.Traverse(visit, true, true); err != nil {
 		return err

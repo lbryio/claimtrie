@@ -1,4 +1,4 @@
-package claimtrie
+package claim
 
 import (
 	"bytes"
@@ -9,28 +9,28 @@ import (
 	"github.com/btcsuite/btcutil"
 )
 
-// NewClaimID ...
-func NewClaimID(op wire.OutPoint) ClaimID {
+// NewID ...
+func NewID(op wire.OutPoint) ID {
 	w := bytes.NewBuffer(op.Hash[:])
 	if err := binary.Write(w, binary.BigEndian, op.Index); err != nil {
 		panic(err)
 	}
-	var id ClaimID
+	var id ID
 	copy(id[:], btcutil.Hash160(w.Bytes()))
 	return id
 }
 
-// NewClaimIDFromString ...
-func NewClaimIDFromString(s string) (ClaimID, error) {
+// NewIDFromString ...
+func NewIDFromString(s string) (ID, error) {
 	b, err := hex.DecodeString(s)
-	var id ClaimID
+	var id ID
 	copy(id[:], b)
 	return id, err
 }
 
-// ClaimID ...
-type ClaimID [20]byte
+// ID ...
+type ID [20]byte
 
-func (id ClaimID) String() string {
+func (id ID) String() string {
 	return hex.EncodeToString(id[:])
 }

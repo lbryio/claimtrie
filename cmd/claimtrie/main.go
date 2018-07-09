@@ -13,11 +13,12 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/urfave/cli"
 
 	"github.com/lbryio/claimtrie"
-	"github.com/lbryio/merkletrie"
+	"github.com/lbryio/claimtrie/claim"
 
-	"github.com/urfave/cli"
+	"github.com/lbryio/merkletrie"
 )
 
 var (
@@ -143,41 +144,41 @@ func newOutPoint(s string) (*wire.OutPoint, error) {
 }
 
 func cmdAddClaim(c *cli.Context) error {
-	amount := claimtrie.Amount(c.Int64("amount"))
+	amount := claim.Amount(c.Int64("amount"))
 	if !c.IsSet("amount") {
 		i, err := rand.Int(rand.Reader, big.NewInt(100))
 		if err != nil {
 			return err
 		}
-		amount = 1 + claimtrie.Amount(i.Int64())
+		amount = 1 + claim.Amount(i.Int64())
 	}
 
-	height := claimtrie.Height(c.Int64("height"))
-	if !c.IsSet("height") {
-		height = ct.BestBlock()
-	}
+	// height := claim.Height(c.Int64("height"))
+	// if !c.IsSet("height") {
+	// 	height = ct.BestBlock()
+	// }
 
 	outPoint, err := newOutPoint(c.String("outpoint"))
 	if err != nil {
 		return nil
 	}
-	return ct.AddClaim(c.String("name"), *outPoint, amount, height)
+	return ct.AddClaim(c.String("name"), *outPoint, amount)
 }
 
 func cmdAddSupport(c *cli.Context) error {
-	amount := claimtrie.Amount(c.Int64("amount"))
+	amount := claim.Amount(c.Int64("amount"))
 	if !c.IsSet("amount") {
 		i, err := rand.Int(rand.Reader, big.NewInt(100))
 		if err != nil {
 			return err
 		}
-		amount = 1 + claimtrie.Amount(i.Int64())
+		amount = 1 + claim.Amount(i.Int64())
 	}
 
-	height := claimtrie.Height(c.Int64("height"))
-	if !c.IsSet("height") {
-		height = ct.BestBlock()
-	}
+	// height := claim.Height(c.Int64("height"))
+	// if !c.IsSet("height") {
+	// 	height = ct.BestBlock()
+	// }
 
 	outPoint, err := newOutPoint(c.String("outpoint"))
 	if err != nil {
@@ -187,11 +188,11 @@ func cmdAddSupport(c *cli.Context) error {
 	if !c.IsSet("id") {
 		return fmt.Errorf("flag -id is required")
 	}
-	cid, err := claimtrie.NewClaimIDFromString(c.String("id"))
+	cid, err := claim.NewIDFromString(c.String("id"))
 	if err != nil {
 		return err
 	}
-	return ct.AddSupport(c.String("name"), *outPoint, amount, height, cid)
+	return ct.AddSupport(c.String("name"), *outPoint, amount, cid)
 }
 
 func cmdSpendClaim(c *cli.Context) error {
@@ -218,7 +219,7 @@ func cmdShow(c *cli.Context) error {
 		fmt.Printf("%-8s: %v\n", prefix, val)
 		return nil
 	}
-	height := claimtrie.Height(c.Int64("height"))
+	height := claim.Height(c.Int64("height"))
 	if !c.IsSet("height") {
 		fmt.Printf("<ClaimTrie Height %d>\n", ct.BestBlock())
 		return ct.Traverse(dump, false, !c.Bool("all"))
@@ -241,7 +242,7 @@ func cmdMerkle(c *cli.Context) error {
 }
 
 func cmdCommit(c *cli.Context) error {
-	height := claimtrie.Height(c.Int64("height"))
+	height := claim.Height(c.Int64("height"))
 	if !c.IsSet("height") {
 		height = ct.BestBlock() + 1
 	}
@@ -249,7 +250,7 @@ func cmdCommit(c *cli.Context) error {
 }
 
 func cmdReset(c *cli.Context) error {
-	height := claimtrie.Height(c.Int64("height"))
+	height := claim.Height(c.Int64("height"))
 	return ct.Reset(height)
 }
 
