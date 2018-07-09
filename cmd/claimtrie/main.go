@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -26,7 +27,8 @@ var (
 	flagHeight   = cli.Int64Flag{Name: "height, ht", Usage: "Height"}
 	flagName     = cli.StringFlag{Name: "name, n", Value: "Hello", Usage: "Name"}
 	flagID       = cli.StringFlag{Name: "id", Usage: "Claim ID"}
-	flagOutPoint = cli.StringFlag{Name: "outpoint, op", Usage: "Outpoint. (HASH:INDEX) "}
+	flagOutPoint = cli.StringFlag{Name: "outpoint, op", Usage: "Outpoint. (HASH:INDEX)"}
+	flagJSON     = cli.BoolFlag{Name: "json, j", Usage: "Show Claim / Support in JSON format."}
 )
 
 var (
@@ -40,7 +42,6 @@ func main() {
 	app.Usage = "A CLI tool for ClaimTrie"
 	app.Version = "0.0.1"
 	app.Action = cli.ShowAppHelp
-
 	app.Commands = []cli.Command{
 		{
 			Name:    "add-claim",
@@ -75,7 +76,7 @@ func main() {
 			Aliases: []string{"s"},
 			Usage:   "Show the Key-Value pairs of the Stage or specified commit. (links nodes are showed if -a is also specified)",
 			Action:  cmdShow,
-			Flags:   []cli.Flag{flagAll, flagHeight},
+			Flags:   []cli.Flag{flagAll, flagJSON, flagHeight},
 		},
 		{
 			Name:    "merkle",
@@ -154,7 +155,7 @@ func cmdAddClaim(c *cli.Context) error {
 
 	// height := claim.Height(c.Int64("height"))
 	// if !c.IsSet("height") {
-	// 	height = ct.BestBlock()
+	// 	height = ct.Height()
 	// }
 
 	outPoint, err := newOutPoint(c.String("outpoint"))
@@ -176,7 +177,7 @@ func cmdAddSupport(c *cli.Context) error {
 
 	// height := claim.Height(c.Int64("height"))
 	// if !c.IsSet("height") {
-	// 	height = ct.BestBlock()
+	// 	height = ct.Height()
 	// }
 
 	outPoint, err := newOutPoint(c.String("outpoint"))
@@ -215,14 +216,23 @@ func cmdShow(c *cli.Context) error {
 			fmt.Printf("%-8s:\n", prefix)
 			return nil
 		}
-		fmt.Printf("%-8s: %v\n", prefix, val)
+		if !c.IsSet("json") {
+			fmt.Printf("%-8s: %v\n", prefix, val)
+			return nil
+		}
+		b, err := json.MarshalIndent(val, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%-8s: %s\n", prefix, b)
 		return nil
 	}
-	height := claim.Height(c.Int64("height"))
+
 	if !c.IsSet("height") {
-		fmt.Printf("<ClaimTrie Height %d>\n", ct.BestBlock())
+		fmt.Printf("<ClaimTrie Height %d>\n", ct.Height())
 		return ct.Traverse(dump, false, !c.Bool("all"))
 	}
+	height := claim.Height(c.Int64("height"))
 	fmt.Printf("NOTE: peeking to the past is broken for now. Try RESET command instead\n")
 	for commit := ct.Head(); commit != nil; commit = commit.Prev {
 		meta := commit.Meta.(claimtrie.CommitMeta)
@@ -243,7 +253,7 @@ func cmdMerkle(c *cli.Context) error {
 func cmdCommit(c *cli.Context) error {
 	height := claim.Height(c.Int64("height"))
 	if !c.IsSet("height") {
-		height = ct.BestBlock() + 1
+		height = ct.Height() + 1
 	}
 	return ct.Commit(height)
 }

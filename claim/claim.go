@@ -1,7 +1,6 @@
 package claim
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -14,88 +13,74 @@ type Amount int64
 // Height ...
 type Height int64
 
-var dbg bool
+// Seq is a strictly increasing sequence number determine relative order between Claims and Supports.
+type Seq uint64
 
 // Claim ...
 type Claim struct {
-	wire.OutPoint
-
+	OutPoint wire.OutPoint
 	ID       ID
 	Amt      Amount
 	EffAmt   Amount
 	Accepted Height
 	ActiveAt Height
+
+	// TODO: Get rid of this. Implement ordered map in upper layer.
+	Seq Seq
 }
 
 func (c *Claim) String() string {
-	if dbg {
-		w := bytes.NewBuffer(nil)
-		fmt.Fprintf(w, "C%-3d amt: %2d, effamt: %v, accepted: %2d, active: %2d, id: %s", c.Index, c.Amt, c.EffAmt, c.Accepted, c.ActiveAt, c.ID)
-		return w.String()
-	}
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		fmt.Printf("can't marshal, err :%s", err)
-	}
-	return string(b)
-}
-
-// Support ...
-type Support struct {
-	wire.OutPoint
-
-	Amt      Amount
-	Accepted Height
-	ActiveAt Height
-
-	SupportedID ID
+	return fmt.Sprintf("C-%-68s amt: %-3d  effamt: %-3d  accepted: %-3d  active: %-3d  id: %s",
+		c.OutPoint, c.Amt, c.EffAmt, c.Accepted, c.ActiveAt, c.ID)
 }
 
 // MarshalJSON customizes the representation of JSON.
 func (c *Claim) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
-		OutPoint        string
-		ID              string
-		Amount          Amount
-		EffectiveAmount Amount
-		Accepted        Height
-		ActiveAt        Height
+		OutPoint  string
+		ID        string
+		Amount    Amount
+		EffAmount Amount
+		Accepted  Height
+		ActiveAt  Height
 	}{
-		OutPoint:        c.OutPoint.String(),
-		ID:              c.ID.String(),
-		Amount:          c.Amt,
-		EffectiveAmount: c.EffAmt,
-		Accepted:        c.Accepted,
-		ActiveAt:        c.ActiveAt,
+		OutPoint:  c.OutPoint.String(),
+		ID:        c.ID.String(),
+		Amount:    c.Amt,
+		EffAmount: c.EffAmt,
+		Accepted:  c.Accepted,
+		ActiveAt:  c.ActiveAt,
 	})
 }
 
-// MarshalJSON ...
-func (s *Support) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&struct {
-		OutPoint         string
-		SupportedClaimID string
-		Amount           Amount
-		Accepted         Height
-		ActiveAt         Height
-	}{
-		OutPoint:         s.OutPoint.String(),
-		SupportedClaimID: s.SupportedID.String(),
-		Amount:           s.Amt,
-		Accepted:         s.Accepted,
-		ActiveAt:         s.ActiveAt,
-	})
+// Support ...
+type Support struct {
+	OutPoint wire.OutPoint
+	ClaimID  ID
+	Amt      Amount
+	Accepted Height
+	ActiveAt Height
+	Seq      Seq
 }
 
 func (s *Support) String() string {
-	if dbg {
-		w := bytes.NewBuffer(nil)
-		fmt.Fprintf(w, "S%-3d amt: %2d,            accepted: %2d, active: %2d, id: %s", s.Index, s.Amt, s.Accepted, s.ActiveAt, s.SupportedID)
-		return w.String()
-	}
-	b, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		fmt.Printf("can't marshal, err :%s", err)
-	}
-	return string(b)
+	return fmt.Sprintf("S-%-68s amt: %-3d               accepted: %-3d  active: %-3d  id: %s",
+		s.OutPoint, s.Amt, s.Accepted, s.ActiveAt, s.ClaimID)
+}
+
+// MarshalJSON customizes the representation of JSON.
+func (s *Support) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		OutPoint string
+		ClaimID  string
+		Amount   Amount
+		Accepted Height
+		ActiveAt Height
+	}{
+		OutPoint: s.OutPoint.String(),
+		ClaimID:  s.ClaimID.String(),
+		Amount:   s.Amt,
+		Accepted: s.Accepted,
+		ActiveAt: s.ActiveAt,
+	})
 }

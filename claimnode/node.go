@@ -1,11 +1,8 @@
 package claimnode
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"math"
 	"strconv"
 
@@ -16,94 +13,84 @@ import (
 	"github.com/lbryio/claimtrie/memento"
 )
 
-var dbg bool
-
 // Node ...
 type Node struct {
-	memento.Memento
-
+	mem        memento.Memento
 	height     claim.Height
 	bestClaims map[claim.Height]*claim.Claim
-	claims     map[wire.OutPoint]*claim.Claim
-	supports   map[wire.OutPoint]*claim.Support
+
+	// To ensure the Claims and Supports are totally ordered, we assign a
+	// strictly increasing seq to each Claim or Support added to the node.
+	seq      claim.Seq
+	claims   map[wire.OutPoint]*claim.Claim
+	supports map[wire.OutPoint]*claim.Support
+
+	updateNext bool
 }
 
-// NewNode ...
+// NewNode returns a new Node.
 func NewNode() *Node {
 	return &Node{
-		Memento:    memento.Memento{},
+		mem:        memento.Memento{},
 		bestClaims: map[claim.Height]*claim.Claim{0: nil},
 		claims:     map[wire.OutPoint]*claim.Claim{},
 		supports:   map[wire.OutPoint]*claim.Support{},
 	}
 }
 
-// Height ...
+// Height returns the current height.
 func (n *Node) Height() claim.Height {
 	return n.height
 }
 
-// BestClaim ...
+// BestClaim returns the best claim at the current height.
 func (n *Node) BestClaim() *claim.Claim {
-	var latest claim.Height
-	for k := range n.bestClaims {
-		if k > latest {
-			latest = k
-		}
-	}
-	return n.bestClaims[latest]
+	c, _ := BestClaimAt(n, n.height)
+	return c
 }
 
-// Tookover ...
+// Tookover returns the height at which current best claim tookover.
 func (n *Node) Tookover() claim.Height {
-	var latest claim.Height
-	for k := range n.bestClaims {
-		if k > latest {
-			latest = k
-		}
-	}
-	return latest
+	_, since := BestClaimAt(n, n.height)
+	return since
 }
 
-// IncrementBlock ...
-func (n *Node) IncrementBlock(h claim.Height) error {
-	if h < 0 {
-		return ErrInvalidHeight
-	}
-	for i := claim.Height(0); i < h; i++ {
+// AdjustTo increments or decrements current height until it reaches the specific height.
+func (n *Node) AdjustTo(h claim.Height) error {
+	for n.height < h {
 		n.height++
 		n.processBlock()
-		n.Commit()
+		n.mem.Commit()
+	}
+	for n.height > h {
+		n.height--
+		n.mem.Rollback()
 	}
 	return nil
 }
 
-// DecrementBlock ...
-func (n *Node) DecrementBlock(h claim.Height) error {
-	if h < 0 {
-		return ErrInvalidHeight
-	}
-	for i := claim.Height(0); i < h; i++ {
-		n.height--
-		n.Rollback()
-	}
+// Reset ...
+func (n *Node) Reset() error {
+	n.mem.RollbackUncommited()
 	return nil
 }
 
 // AddClaim ...
 func (n *Node) AddClaim(op wire.OutPoint, amt claim.Amount) (*claim.Claim, error) {
+	n.seq++
 	c := &claim.Claim{
 		OutPoint: op,
 		ID:       claim.NewID(op),
 		Amt:      amt,
 		Accepted: n.height + 1,
 		ActiveAt: n.height + 1,
+		Seq:      n.seq,
 	}
 	if n.BestClaim() != nil {
 		c.ActiveAt = calActiveHeight(c.Accepted, c.Accepted, n.Tookover())
 	}
 
-	n.Execute(cmdAddClaim{node: n, claim: c})
+	n.mem.Execute(cmdAddClaim{node: n, claim: c})
 	return c, nil
 }
 
@@ -113,24 +100,27 @@ func (n *Node) RemoveClaim(op wire.OutPoint) error {
 	if !ok {
 		return ErrNotFound
 	}
-	n.Execute(cmdRemoveClaim{node: n, claim: c})
+	n.mem.Execute(cmdRemoveClaim{node: n, claim: c})
 
 	if n.BestClaim() != c {
 		return nil
 	}
-	n.Execute(updateNodeBestClaim{node: n, height: n.Tookover(), old: c, new: nil})
+	n.mem.Execute(updateNodeBestClaim{node: n, height: n.Tookover(), old: c, new: nil})
 	n.updateActiveHeights()
+	n.updateNext = true
 	return nil
 }
 
 // AddSupport ...
 func (n *Node) AddSupport(op wire.OutPoint, amt claim.Amount, supported claim.ID) (*claim.Support, error) {
+	n.seq++
 	s := &claim.Support{
-		OutPoint:    op,
-		Amt:         amt,
-		SupportedID: supported,
-		Accepted:    n.height + 1,
-		ActiveAt:    n.height + 1,
+		OutPoint: op,
+		Amt:      amt,
+		ClaimID:  supported,
+		Accepted: n.height + 1,
+		ActiveAt: n.height + 1,
+		Seq:      n.seq,
 	}
 	if n.BestClaim() == nil || n.BestClaim().OutPoint != op {
 		s.ActiveAt = calActiveHeight(s.Accepted, s.Accepted, n.Tookover())
@@ -140,7 +130,7 @@ func (n *Node) AddSupport(op wire.OutPoint, amt claim.Amount, supported claim.ID
 		if c.ID != supported {
 			continue
 		}
-		n.Execute(cmdAddSupport{node: n, support: s})
+		n.mem.Execute(cmdAddSupport{node: n, support: s})
 		return s, nil
 	}
 
@@ -154,12 +144,18 @@ func (n *Node) RemoveSupport(op wire.OutPoint) error {
 	if !ok {
 		return ErrNotFound
 	}
-	n.Execute(cmdRemoveSupport{node: n, support: s})
+	n.mem.Execute(cmdRemoveSupport{node: n, support: s})
 	return nil
 }
 
-// FindNextUpdateHeights ...
-func (n *Node) FindNextUpdateHeights() claim.Height {
+// FindNextUpdateHeight returns the smallest height in the future that the the state of the node might change.
+// If no such height exists, the current height of the node is returned.
+func (n *Node) FindNextUpdateHeight() claim.Height {
+	if n.updateNext {
+		n.updateNext = false
+		return n.height + 1
+	}
+
 	next := claim.Height(math.MaxInt64)
 	for _, v := range n.claims {
 		if v.ActiveAt > n.height && v.ActiveAt < next {
@@ -187,63 +183,14 @@ func (n *Node) Hash() chainhash.Hash {
 
 // MarshalJSON customizes JSON marshaling of the Node.
 func (n *Node) MarshalJSON() ([]byte, error) {
-	c := make([]*claim.Claim, 0, len(n.claims))
-	for _, v := range n.claims {
-		c = append(c, v)
-	}
-	s := make([]*claim.Support, 0, len(n.supports))
-	for _, v := range n.supports {
-		s = append(s, v)
-	}
-	return json.Marshal(&struct {
-		Height    claim.Height
-		Hash      string
-		Tookover  claim.Height
-		BestClaim *claim.Claim
-		Claims    []*claim.Claim
-		Supports  []*claim.Support
-	}{
-		Height:    n.height,
-		Hash:      n.Hash().String(),
-		Tookover:  n.Tookover(),
-		BestClaim: n.BestClaim(),
-		Claims:    c,
-		Supports:  s,
-	})
+	return toJSON(n)
 }
 
 // String implements Stringer interface.
 func (n *Node) String() string {
-	if dbg {
-		w := bytes.NewBuffer(nil)
-		fmt.Fprintf(w, "H: %2d   BestClaims: ", n.height)
-		for k, v := range n.bestClaims {
-			if v == nil {
-				fmt.Fprintf(w, "{%d, nil}, ", k)
-				continue
-			}
-			fmt.Fprintf(w, "{%d, %d}, ", k, v.Index)
-		}
-		fmt.Fprintf(w, "\n")
-		for _, v := range n.claims {
-			fmt.Fprintf(w, "\n    %v", v)
-			if v == n.BestClaim() {
-				fmt.Fprintf(w, " <B> ")
-			}
-		}
-		for _, v := range n.supports {
-			fmt.Fprintf(w, "\n   %v", v)
-		}
-		fmt.Fprintf(w, "\n")
-		return w.String()
-
-	}
-	b, err := json.MarshalIndent(n, "", "  ")
-	if err != nil {
-		panic("can't marshal Node")
-	}
-	return string(b)
+	return toString(n)
 }
+
 func (n *Node) updateEffectiveAmounts() {
 	for _, c := range n.claims {
 		c.EffAmt = c.Amt
@@ -252,7 +199,7 @@ func (n *Node) updateEffectiveAmounts() {
 			continue
 		}
 		for _, s := range n.supports {
-			if s.ActiveAt > n.height || s.SupportedID != c.ID {
+			if s.ActiveAt > n.height || s.ClaimID != c.ID {
 				continue
 			}
 			c.EffAmt += s.Amt
@@ -263,38 +210,78 @@ func (n *Node) updateEffectiveAmounts() {
 func (n *Node) updateActiveHeights() {
 	for _, v := range n.claims {
 		if old, new := v.ActiveAt, calActiveHeight(v.Accepted, n.height, n.height); old != new {
-			n.Execute(cmdUpdateClaimActiveHeight{claim: v, old: old, new: new})
+			n.mem.Execute(cmdUpdateClaimActiveHeight{claim: v, old: old, new: new})
 		}
 	}
 	for _, v := range n.supports {
 		if old, new := v.ActiveAt, calActiveHeight(v.Accepted, n.height, n.height); old != new {
-			n.Execute(cmdUpdateSupportActiveHeight{support: v, old: old, new: new})
+			n.mem.Execute(cmdUpdateSupportActiveHeight{support: v, old: old, new: new})
 		}
 	}
 }
+
 func (n *Node) processBlock() {
 	for {
+		n.updateEffectiveAmounts()
 		candidate := findCandiadte(n)
 		if n.BestClaim() == candidate {
 			return
 		}
-		n.Execute(updateNodeBestClaim{node: n, height: n.height, old: n.bestClaims[n.height], new: candidate})
+		n.mem.Execute(updateNodeBestClaim{node: n, height: n.height, old: n.bestClaims[n.height], new: candidate})
 		n.updateActiveHeights()
 	}
 }
 
 func findCandiadte(n *Node) *claim.Claim {
-	n.updateEffectiveAmounts()
 	var candidate *claim.Claim
 	for _, v := range n.claims {
-		if v.ActiveAt > n.height {
+		switch {
+		case v.ActiveAt > n.height:
 			continue
-		}
-		if candidate == nil || v.EffAmt > candidate.EffAmt {
+		case candidate == nil:
+			candidate = v
+		case v.EffAmt > candidate.EffAmt:
+			candidate = v
+		case v.EffAmt == candidate.EffAmt && v.Seq < candidate.Seq:
 			candidate = v
 		}
 	}
 	return candidate
+}
+
+// BestClaimAt returns the BestClaim at specified Height along with the height when the claim tookover.
+func BestClaimAt(n *Node, at claim.Height) (best *claim.Claim, since claim.Height) {
+	var latest claim.Height
+	for k := range n.bestClaims {
+		if k > at {
+			continue
+		}
+		if k > latest {
+			latest = k
+		}
+	}
+	return n.bestClaims[latest], latest
+}
+
+// clone copies (deeply) the contents (except memento) of src to dst.
+func clone(dst, src *Node) {
+	dst.height = src.height
+	for k, v := range src.bestClaims {
+		if v == nil {
+			dst.bestClaims[k] = nil
+			continue
+		}
+		dup := *v
+		dst.bestClaims[k] = &dup
+	}
+	for k, v := range src.claims {
+		dup := *v
+		dst.claims[k] = &dup
+	}
+	for k, v := range src.supports {
+		dup := *v
+		dst.supports[k] = &dup
+	}
 }
 
 func calNodeHash(op wire.OutPoint, tookover claim.Height) chainhash.Hash {

@@ -28,9 +28,19 @@ func (m *Memento) Commit() {
 
 // Rollback ...
 func (m *Memento) Rollback() {
-	cmds := m.stack[len(m.stack)-1]
-	m.stack = m.stack[:len(m.stack)-1]
+	n := len(m.stack)
+	cmds := m.stack[n-1]
+	m.stack = m.stack[:n-1]
+	m.cmds = nil
 	for i := len(cmds) - 1; i >= 0; i-- {
 		cmds[i].Undo()
 	}
+}
+
+// RollbackUncommited ...
+func (m *Memento) RollbackUncommited() {
+	for i := len(m.cmds) - 1; i >= 0; i-- {
+		m.cmds[i].Undo()
+	}
+	m.cmds = nil
 }

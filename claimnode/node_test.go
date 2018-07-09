@@ -76,10 +76,10 @@ func Test_History1(t *testing.T) {
 	// no competing bids
 	test1 := func() {
 		c1, _ = n.AddClaim(*newOutPoint(1), 1)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
@@ -87,49 +87,49 @@ func Test_History1(t *testing.T) {
 	test2 := func() {
 		n.AddClaim(*newOutPoint(2), 1)
 		c3, _ = n.AddClaim(*newOutPoint(3), 2)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c3, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 
 	}
 	// make two claims , one older
 	test3 := func() {
 		c4, _ = n.AddClaim(*newOutPoint(4), 1)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c4, n.BestClaim())
 		n.AddClaim(*newOutPoint(5), 1)
-		n.IncrementBlock(1)
+		n.AdjustTo(2)
 		assert.Equal(t, c4, n.BestClaim())
-		n.IncrementBlock(1)
+		n.AdjustTo(3)
 		assert.Equal(t, c4, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(2)
 		assert.Equal(t, c4, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(1)
 
 		assert.Equal(t, c4, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
 	// check claim takeover
 	test4 := func() {
 		c6, _ = n.AddClaim(*newOutPoint(6), 1)
-		n.IncrementBlock(10)
+		n.AdjustTo(10)
 		assert.Equal(t, c6, n.BestClaim())
 
 		c7, _ = n.AddClaim(*newOutPoint(7), 2)
-		n.IncrementBlock(1)
+		n.AdjustTo(11)
 		assert.Equal(t, c6, n.BestClaim())
-		n.IncrementBlock(10)
+		n.AdjustTo(21)
 		assert.Equal(t, c7, n.BestClaim())
 
-		n.DecrementBlock(10)
+		n.AdjustTo(11)
 		assert.Equal(t, c6, n.BestClaim())
-		n.DecrementBlock(10)
+		n.AdjustTo(1)
 		assert.Equal(t, c6, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
@@ -137,51 +137,51 @@ func Test_History1(t *testing.T) {
 	test5 := func() {
 		c1, _ = n.AddClaim(*newOutPoint(1), 2)
 		c2, _ = n.AddClaim(*newOutPoint(2), 1)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
 		n.RemoveClaim(c1.OutPoint)
-		n.IncrementBlock(1)
+		n.AdjustTo(2)
 		assert.Equal(t, c2, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
 	// spending winning claim will make inactive claim winner
 	test6 := func() {
 		c3, _ = n.AddClaim(*newOutPoint(3), 2)
-		n.IncrementBlock(10)
+		n.AdjustTo(10)
 		assert.Equal(t, c3, n.BestClaim())
 
 		c4, _ = n.AddClaim(*newOutPoint(4), 2)
-		n.IncrementBlock(1)
+		n.AdjustTo(11)
 		assert.Equal(t, c3, n.BestClaim())
 		n.RemoveClaim(c3.OutPoint)
-		n.IncrementBlock(1)
+		n.AdjustTo(12)
 		assert.Equal(t, c4, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(11)
 		assert.Equal(t, c3, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(10)
 		assert.Equal(t, c3, n.BestClaim())
-		n.DecrementBlock(10)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
 	// spending winning claim will empty out claim trie
 	test7 := func() {
 		c5, _ = n.AddClaim(*newOutPoint(5), 2)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c5, n.BestClaim())
 		n.RemoveClaim(c5.OutPoint)
-		n.IncrementBlock(1)
+		n.AdjustTo(2)
 		assert.NotEqual(t, c5, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c5, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
@@ -191,49 +191,49 @@ func Test_History1(t *testing.T) {
 		c2, _ = n.AddClaim(*newOutPoint(2), 1)
 		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
 		s2, _ = n.AddSupport(*newOutPoint(12), 10, c2.ID)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c2, n.BestClaim())
 		assert.Equal(t, claim.Amount(11), n.BestClaim().EffAmt)
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 	// check support delay
 	test9 := func() {
 		c3, _ = n.AddClaim(*newOutPoint(3), 1)
 		c4, _ = n.AddClaim(*newOutPoint(4), 2)
-		n.IncrementBlock(10)
+		n.AdjustTo(10)
 		assert.Equal(t, c4, n.BestClaim())
 		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
 		s4, _ = n.AddSupport(*newOutPoint(14), 10, c3.ID)
-		n.IncrementBlock(10)
+		n.AdjustTo(20)
 		assert.Equal(t, c4, n.BestClaim())
 		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
-		n.IncrementBlock(1)
+		n.AdjustTo(21)
 		assert.Equal(t, c3, n.BestClaim())
 		assert.Equal(t, claim.Amount(11), n.BestClaim().EffAmt)
 
-		n.DecrementBlock(1)
+		n.AdjustTo(20)
 		assert.Equal(t, c4, n.BestClaim())
 		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
-		n.DecrementBlock(10)
+		n.AdjustTo(10)
 		assert.Equal(t, c4, n.BestClaim())
 		assert.Equal(t, claim.Amount(2), n.BestClaim().EffAmt)
-		n.DecrementBlock(10)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
 	// supporting and abandoing on the same block will cause it to crash
 	test10 := func() {
 		c1, _ = n.AddClaim(*newOutPoint(1), 2)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
 		n.RemoveClaim(c1.OutPoint)
-		n.IncrementBlock(1)
+		n.AdjustTo(2)
 		assert.NotEqual(t, c1, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
 	}
 
@@ -241,19 +241,43 @@ func Test_History1(t *testing.T) {
 	test11 := func() {
 		c1, _ = n.AddClaim(*newOutPoint(1), 2)
 		s1, _ = n.AddSupport(*newOutPoint(11), 1, c1.ID)
-		n.IncrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
 
 		//abandoning a support and abandoing claim on the same block will cause it to crash
 		n.RemoveClaim(c1.OutPoint)
 		n.RemoveSupport(s1.OutPoint)
-		n.IncrementBlock(1)
+		n.AdjustTo(2)
 		assert.Nil(t, n.BestClaim())
 
-		n.DecrementBlock(1)
+		n.AdjustTo(1)
 		assert.Equal(t, c1, n.BestClaim())
-		n.DecrementBlock(1)
+		n.AdjustTo(0)
 		assert.Nil(t, n.BestClaim())
+	}
+	test12 := func() {
+		c1, _ = n.AddClaim(*newOutPoint(1), 3)
+		c2, _ = n.AddClaim(*newOutPoint(2), 2)
+		n.AdjustTo(10)
+		// c1 tookover since 1
+		assert.Equal(t, c1, n.BestClaim())
+
+		// C3 will takeover at 11 + 11 - 1 = 21
+		c3, _ = n.AddClaim(*newOutPoint(3), 5)
+		s1, _ = n.AddSupport(*newOutPoint(11), 2, c2.ID)
+
+		n.AdjustTo(20)
+		assert.Equal(t, c1, n.BestClaim())
+
+		n.AdjustTo(21)
+		assert.Equal(t, c3, n.BestClaim())
+
+		n.RemoveClaim(c3.OutPoint)
+		n.AdjustTo(22)
+
+		// c2 (3+4) should bid over c1(5) at 21
+		assert.Equal(t, c2, n.BestClaim())
+
 	}
 	tests := []func(){
 		test1,
@@ -267,9 +291,10 @@ func Test_History1(t *testing.T) {
 		test9,
 		test10,
 		test11,
+		test12,
 	}
 	for _, tt := range tests {
 		tt()
 	}
-	_ = []func(){test1, test2, test3, test4, test5, test6, test7, test8, test9, test10, test11}
+	_ = []func(){test1, test2, test3, test4, test5, test6, test7, test8, test9, test10, test12}
 }

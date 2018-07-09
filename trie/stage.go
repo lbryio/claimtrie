@@ -22,6 +22,7 @@ func (s *Stage) Update(key Key, val Value) error {
 	defer s.mu.Unlock()
 
 	n := s.root
+	n.hash = nil
 	for _, k := range key {
 		org := n.links[k]
 		n.links[k] = newNode(nil)
@@ -31,10 +32,8 @@ func (s *Stage) Update(key Key, val Value) error {
 		n.hash = nil
 		n = n.links[k]
 	}
-	if n.value != val {
-		n.value = val
-		n.hash = nil
-	}
+	n.value = val
+	n.hash = nil
 	return nil
 }
 

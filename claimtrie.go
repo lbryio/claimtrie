@@ -1,8 +1,6 @@
 package claimtrie
 
 import (
-	"fmt"
-
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 
@@ -16,7 +14,7 @@ import (
 type ClaimTrie struct {
 
 	// The highest block number commited to the ClaimTrie.
-	bestBlock claim.Height
+	height claim.Height
 
 	// Immutable linear history.
 	head *trie.Commit
@@ -24,8 +22,16 @@ type ClaimTrie struct {
 	// An overlay supporting Copy-on-Write to the current tip commit.
 	stg *trie.Stage
 
-	// pending keeps track update for future block height.
-	pending map[claim.Height][]string
+	// todos tracks pending updates for future block height.
+	//
+	// A claim or support has a dynamic active peroid (ActiveAt, ExipresAt).
+	// This makes the state of each node dynamic as the ClaimTrie increases/decreases its height.
+	// Instead of polling every node for updates everytime ClaimTrie changes, the node is evaluated
+	// for the nearest future height it may change the states, and add that height to the todos.
+	//
+	// When a ClaimTrie at height h1 is committed with h2, the pending updates from todos (h1, h2]
+	// will be applied to bring the nodes up to date.
+	todos map[claim.Height][]string
 }
 
 // CommitMeta implements trie.CommitMeta with commit-specific metadata.
@@ -37,71 +43,57 @@ type CommitMeta struct {
 func New() *ClaimTrie {
 	mt := trie.New()
 	return &ClaimTrie{
-		head:    trie.NewCommit(nil, CommitMeta{0}, mt),
-		stg:     trie.NewStage(mt),
-		pending: map[claim.Height][]string{},
+		head:  trie.NewCommit(nil, CommitMeta{0}, mt),
+		stg:   trie.NewStage(mt),
+		todos: map[claim.Height][]string{},
 	}
 }
 
-func updateStageNode(stg *trie.Stage, name string, modifier func(n *claimnode.Node) error) error {
-	v, err := stg.Get(trie.Key(name))
-	if err != nil && err != trie.ErrKeyNotFound {
-		return err
-	}
-	var n *claimnode.Node
-	if v == nil {
-		n = claimnode.NewNode()
-	} else {
-		n = v.(*claimnode.Node)
-	}
-	if err = modifier(n); err != nil {
-		return err
-	}
-	return stg.Update(trie.Key(name), n)
+// Height returns the highest height of blocks commited to the ClaimTrie.
+func (ct *ClaimTrie) Height() claim.Height {
+	return ct.height
+}
+
+// Head returns the tip commit in the commit database.
+func (ct *ClaimTrie) Head() *trie.Commit {
+	return ct.head
 }
 
 // AddClaim adds a Claim to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt claim.Amount) error {
-	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
-		if err := n.IncrementBlock(claim.Height(ct.bestBlock) - n.Height()); err != nil {
-			return err
-		}
-		_, err := n.AddClaim(op, claim.Amount(amt))
-		next := ct.bestBlock + 1
-		ct.pending[next] = append(ct.pending[next], name)
+	modifier := func(n *claimnode.Node) error {
+		_, err := n.AddClaim(op, amt)
 		return err
-	})
+	}
+	return updateNode(ct, ct.height, name, modifier)
 }
 
 // AddSupport adds a Support to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt claim.Amount, supported claim.ID) error {
-	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
+	modifier := func(n *claimnode.Node) error {
 		_, err := n.AddSupport(op, amt, supported)
-		next := ct.bestBlock + 1
-		ct.pending[next] = append(ct.pending[next], name)
 		return err
-	})
+	}
+	return updateNode(ct, ct.height, name, modifier)
 }
 
 // SpendClaim removes a Claim in the Stage.
 func (ct *ClaimTrie) SpendClaim(name string, op wire.OutPoint) error {
-	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
-		next := ct.bestBlock + 1
-		ct.pending[next] = append(ct.pending[next], name)
+	modifier := func(n *claimnode.Node) error {
 		return n.RemoveClaim(op)
-	})
+	}
+	return updateNode(ct, ct.height, name, modifier)
 }
 
 // SpendSupport removes a Support in the Stage.
 func (ct *ClaimTrie) SpendSupport(name string, op wire.OutPoint) error {
-	return updateStageNode(ct.stg, name, func(n *claimnode.Node) error {
-		next := ct.bestBlock + 1
-		ct.pending[next] = append(ct.pending[next], name)
+	modifier := func(n *claimnode.Node) error {
 		return n.RemoveSupport(op)
-	})
+	}
+	return updateNode(ct, ct.height, name, modifier)
 }
 
-// Traverse visits Nodes in the Stage of the ClaimTrie.
+// Traverse visits Nodes in the Stage.
 func (ct *ClaimTrie) Traverse(visit trie.Visit, update, valueOnly bool) error {
 	return ct.stg.Traverse(visit, update, valueOnly)
 }
@@ -111,72 +103,121 @@ func (ct *ClaimTrie) MerkleHash() chainhash.Hash {
 	return ct.stg.MerkleHash()
 }
 
-// BestBlock returns the highest height of blocks commited to the ClaimTrie.
-func (ct *ClaimTrie) BestBlock() claim.Height {
-	return ct.bestBlock
-}
-
-// Commit commits the current Stage into commit database, and updates the BestBlock with the associated height.
-// The height must be higher than the current BestBlock, or ErrInvalidHeight is returned.
+// Commit commits the current Stage into commit database.
+// If h is lower than the current height, ErrInvalidHeight is returned.
+//
+// As Stage can be always cleanly reset to a specific commited snapshot,
+// any error occurred during the commit would leave the Stage partially updated
+// so the caller can inspect the status if interested.
+//
+// Changes to the ClaimTrie status, such as height or todos, are all or nothing.
 func (ct *ClaimTrie) Commit(h claim.Height) error {
-	if h <= ct.bestBlock {
+
+	// Already caught up.
+	if h <= ct.height {
 		return ErrInvalidHeight
 	}
 
-	for i := claim.Height(ct.bestBlock) + 1; i <= h; i++ {
-		for _, prefix := range ct.pending[i] {
-			// Brings the value node to date.
-			catchup := func(n *claimnode.Node) error {
-				if err := n.IncrementBlock(i - n.Height()); err != nil {
-					return err
-				}
-
-				// After the update, the node may subscribe to another pending update.
-				if next := n.FindNextUpdateHeights(); next > i {
-					fmt.Printf("Subscribe pendings for %v to future Height at %d\n", prefix, next)
-					ct.pending[next] = append(ct.pending[next], prefix)
-				}
-				return nil
-			}
-
-			// Update the node with the catchup modifier, and clear the Merkle Hash along the way.
-			if err := updateStageNode(ct.stg, prefix, catchup); err != nil {
+	// Apply pending updates in todos (ct.Height, h].
+	// Note that ct.Height is excluded while h is included.
+	for i := ct.height + 1; i <= h; i++ {
+		for _, name := range ct.todos[i] {
+			// dummy modifier to have the node brought up to date.
+			modifier := func(n *claimnode.Node) error { return nil }
+			if err := updateNode(ct, i, name, modifier); err != nil {
 				return err
 			}
 		}
-		delete(ct.pending, i)
 	}
 	commit, err := ct.stg.Commit(ct.head, CommitMeta{Height: h})
 	if err != nil {
 		return err
 	}
+
+	// No more errors. Change the ClaimTrie status.
 	ct.head = commit
-	ct.bestBlock = h
+	for i := ct.height + 1; i <= h; i++ {
+		delete(ct.todos, i)
+	}
+	ct.height = h
 	return nil
 }
 
 // Reset reverts the Stage to a specified commit by height.
 func (ct *ClaimTrie) Reset(h claim.Height) error {
-	visit := func(prefix trie.Key, value trie.Value) error {
+	if h > ct.height {
+		return ErrInvalidHeight
+	}
+
+	// Find the most recent commit that is equal or earlier than h.
+	commit := ct.head
+	for commit != nil {
+		if commit.Meta.(CommitMeta).Height <= h {
+			break
+		}
+		commit = commit.Prev
+	}
+
+	// The commit history is not deep enough.
+	if commit == nil {
+		return ErrInvalidHeight
+	}
+
+	// Drop (rollback) any uncommited change, and adjust to the specified height.
+	rollback := func(prefix trie.Key, value trie.Value) error {
 		n := value.(*claimnode.Node)
-		return n.DecrementBlock(n.Height() - claim.Height(h))
+		n.Reset()
+		return n.AdjustTo(h)
 	}
-	if err := ct.stg.Traverse(visit, true, true); err != nil {
-		return err
+	if err := ct.stg.Traverse(rollback, true, true); err != nil {
+		// Rollback a node to a known state can't go wrong.
+		// It's a programming error, and can't recover.
+		panic(err)
 	}
-	for commit := ct.head; commit != nil; commit = commit.Prev {
-		meta := commit.Meta.(CommitMeta)
-		if meta.Height <= h {
-			ct.head = commit
-			ct.bestBlock = h
-			ct.stg = trie.NewStage(commit.MerkleTrie)
-			return nil
+
+	// Update ClaimTrie status
+	ct.head = commit
+	ct.height = h
+	for k := range ct.todos {
+		if k >= h {
+			delete(ct.todos, k)
 		}
 	}
-	return ErrInvalidHeight
+	ct.stg = trie.NewStage(commit.MerkleTrie)
+	return nil
 }
 
-// Head returns the current tip commit in the commit database.
-func (ct *ClaimTrie) Head() *trie.Commit {
-	return ct.head
+// updateNode implements a get-modify-set sequence to the node associated with name.
+// After the modifier is applied, the node is evaluated for how soon in the
+// nearest future change. And register it, if any, to the todos for the next updateNode.
+func updateNode(ct *ClaimTrie, h claim.Height, name string, modifier func(n *claimnode.Node) error) error {
+
+	// Get the node from the Stage, or create one if it did not exist yet.
+	v, err := ct.stg.Get(trie.Key(name))
+	if err == trie.ErrKeyNotFound {
+		v = claimnode.NewNode()
+	} else if err != nil {
+		return err
+	}
+
+	n := v.(*claimnode.Node)
+
+	// Bring the node state up to date.
+	if err = n.AdjustTo(h); err != nil {
+		return err
+	}
+
+	// Apply the modifier on the node.
+	if err = modifier(n); err != nil {
+		return err
+	}
+
+	// Register pending update, if any, for future height.
+	next := n.FindNextUpdateHeight()
+	if next > h {
+		ct.todos[next] = append(ct.todos[next], name)
+	}
+
+	// Store the modified value back to the Stage, clearing out all the Merkle Hash on the path.
+	return ct.stg.Update(trie.Key(name), n)
 }
