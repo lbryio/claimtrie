@@ -17,8 +17,7 @@ import (
 
 	"github.com/lbryio/claimtrie"
 	"github.com/lbryio/claimtrie/claim"
-
-	"github.com/lbryio/merkletrie"
+	"github.com/lbryio/claimtrie/trie"
 )
 
 var (
@@ -211,7 +210,7 @@ func cmdSpendSupport(c *cli.Context) error {
 }
 
 func cmdShow(c *cli.Context) error {
-	dump := func(prefix merkletrie.Key, val merkletrie.Value) error {
+	dump := func(prefix trie.Key, val trie.Value) error {
 		if val == nil {
 			fmt.Printf("%-8s:\n", prefix)
 			return nil
@@ -255,13 +254,13 @@ func cmdReset(c *cli.Context) error {
 }
 
 func cmdLog(c *cli.Context) error {
-	commitVisit := func(c *merkletrie.Commit) {
+	commitVisit := func(c *trie.Commit) {
 		meta := c.Meta.(claimtrie.CommitMeta)
 		fmt.Printf("height: %d, commit %s\n", meta.Height, c.MerkleTrie.MerkleHash())
 	}
 
 	fmt.Printf("\n")
-	merkletrie.Log(ct.Head(), commitVisit)
+	trie.Log(ct.Head(), commitVisit)
 	return nil
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/lbryio/claimtrie/claim"
 	"github.com/lbryio/claimtrie/claimnode"
 
-	"github.com/lbryio/merkletrie"
+	"github.com/lbryio/claimtrie/trie"
 )
 
 // ClaimTrie implements a Merkle Trie supporting linear history of commits.
@@ -19,33 +19,33 @@ type ClaimTrie struct {
 	bestBlock claim.Height
 
 	// Immutable linear history.
-	head *merkletrie.Commit
+	head *trie.Commit
 
 	// An overlay supporting Copy-on-Write to the current tip commit.
-	stg *merkletrie.Stage
+	stg *trie.Stage
 
 	// pending keeps track update for future block height.
 	pending map[claim.Height][]string
 }
 
-// CommitMeta implements merkletrie.CommitMeta with commit-specific metadata.
+// CommitMeta implements trie.CommitMeta with commit-specific metadata.
 type CommitMeta struct {
 	Height claim.Height
 }
 
 // New returns a ClaimTrie.
 func New() *ClaimTrie {
-	mt := merkletrie.New()
+	mt := trie.New()
 	return &ClaimTrie{
-		head:    merkletrie.NewCommit(nil, CommitMeta{0}, mt),
-		stg:     merkletrie.NewStage(mt),
+		head:    trie.NewCommit(nil, CommitMeta{0}, mt),
+		stg:     trie.NewStage(mt),
 		pending: map[claim.Height][]string{},
 	}
 }
 
-func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *claimnode.Node) error) error {
-	v, err := stg.Get(merkletrie.Key(name))
-	if err != nil && err != merkletrie.ErrKeyNotFound {
+func updateStageNode(stg *trie.Stage, name string, modifier func(n *claimnode.Node) error) error {
+	v, err := stg.Get(trie.Key(name))
+	if err != nil && err != trie.ErrKeyNotFound {
 		return err
 	}
 	var n *claimnode.Node
@@ -57,7 +57,7 @@ func updateStageNode(stg *merkletrie.Stage, name string, modifier func(n *claimn
 	if err = modifier(n); err != nil {
 		return err
 	}
-	return stg.Update(merkletrie.Key(name), n)
+	return stg.Update(trie.Key(name), n)
 }
 
 // AddClaim adds a Claim to the Stage of ClaimTrie.
@@ -102,7 +102,7 @@ func (ct *ClaimTrie) SpendSupport(name string, op wire.OutPoint) error {
 }
 
 // Traverse visits Nodes in the Stage of the ClaimTrie.
-func (ct *ClaimTrie) Traverse(visit merkletrie.Visit, update, valueOnly bool) error {
+func (ct *ClaimTrie) Traverse(visit trie.Visit, update, valueOnly bool) error {
 	return ct.stg.Traverse(visit, update, valueOnly)
 }
 
@@ -157,7 +157,7 @@ func (ct *ClaimTrie) Commit(h claim.Height) error {
 
 // Reset reverts the Stage to a specified commit by height.
 func (ct *ClaimTrie) Reset(h claim.Height) error {
-	visit := func(prefix merkletrie.Key, value merkletrie.Value) error {
+	visit := func(prefix trie.Key, value trie.Value) error {
 		n := value.(*claimnode.Node)
 		return n.DecrementBlock(n.Height() - claim.Height(h))
 	}
@@ -169,7 +169,7 @@ func (ct *ClaimTrie) Reset(h claim.Height) error {
 		if meta.Height <= h {
 			ct.head = commit
 			ct.bestBlock = h
-			ct.stg = merkletrie.NewStage(commit.MerkleTrie)
+			ct.stg = trie.NewStage(commit.MerkleTrie)
 			return nil
 		}
 	}
@@ -177,6 +177,6 @@ func (ct *ClaimTrie) Reset(h claim.Height) error {
 }
 
 // Head returns the current tip commit in the commit database.
-func (ct *ClaimTrie) Head() *merkletrie.Commit {
+func (ct *ClaimTrie) Head() *trie.Commit {
 	return ct.head
 }
