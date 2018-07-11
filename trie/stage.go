@@ -39,6 +39,9 @@ func (s *Stage) Update(key Key, val Value) error {
 
 // Commit ...
 func (s *Stage) Commit(head *Commit, meta CommitMeta) (*Commit, error) {
+	// Update Merkle Hash.
+	s.MerkleHash()
+
 	c := NewCommit(head, meta, s.MerkleTrie)
 
 	s.MerkleTrie = New()

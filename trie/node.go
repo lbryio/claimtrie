@@ -17,6 +17,7 @@ func newNode(val Value) *node {
 // We clear the Merkle Hash for every node along the path, including the root.
 // Calculation of the hash happens much less frequently then updating to the MerkleTrie.
 func update(n *node, key Key, val Value) {
+	n.hash = nil
 	// Follow the path to reach the node.
 	for _, k := range key {
 		if n.links[k] == nil {
