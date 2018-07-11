@@ -122,7 +122,7 @@ func (n *Node) AddSupport(op wire.OutPoint, amt claim.Amount, supported claim.ID
 		ActiveAt: n.height + 1,
 		Seq:      n.seq,
 	}
-	if n.BestClaim() == nil || n.BestClaim().OutPoint != op {
+	if n.BestClaim() == nil || n.BestClaim().ID != supported {
 		s.ActiveAt = calActiveHeight(s.Accepted, s.Accepted, n.Tookover())
 	}
 
