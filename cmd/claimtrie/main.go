@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+
 	"github.com/urfave/cli"
 
 	"github.com/lbryio/claimtrie"
@@ -32,7 +34,9 @@ var (
 )
 
 var (
-	errNotImplemented = fmt.Errorf("not implemented")
+	errNotImplemented = errors.New("not implemented")
+	errInvalidHeight  = errors.New("invalid height")
+	errCommitNotFound = errors.New("commit not found")
 )
 
 func main() {
@@ -117,6 +121,14 @@ func main() {
 	}
 }
 
+func randInt(min, max int64) int64 {
+	i, err := rand.Int(rand.Reader, big.NewInt(100))
+	if err != nil {
+		panic(err)
+	}
+	return min + i.Int64()
+}
+
 var ct = claimtrie.New()
 
 // newOutPoint generates random OutPoint for the ease of testing.
@@ -143,80 +155,79 @@ func newOutPoint(s string) (*wire.OutPoint, error) {
 	return wire.NewOutPoint(h, uint32(idx)), nil
 }
 
-func cmdAddClaim(c *cli.Context) error {
-	amount := claim.Amount(c.Int64("amount"))
-	if !c.IsSet("amount") {
-		i, err := rand.Int(rand.Reader, big.NewInt(100))
-		if err != nil {
-			return err
-		}
-		amount = 1 + claim.Amount(i.Int64())
-	}
-
-	// height := claim.Height(c.Int64("height"))
-	// if !c.IsSet("height") {
-	// 	height = ct.Height()
-	// }
-
-	outPoint, err := newOutPoint(c.String("outpoint"))
-	if err != nil {
-		return nil
-	}
-	return ct.AddClaim(c.String("name"), *outPoint, amount)
+type args struct {
+	*cli.Context
+	err error
 }
 
-func cmdAddSupport(c *cli.Context) error {
-	amount := claim.Amount(c.Int64("amount"))
-	if !c.IsSet("amount") {
-		i, err := rand.Int(rand.Reader, big.NewInt(100))
-		if err != nil {
-			return err
-		}
-		amount = 1 + claim.Amount(i.Int64())
+func (a *args) amount() claim.Amount {
+	if a.err != nil {
+		return 0
 	}
-
-	// height := claim.Height(c.Int64("height"))
-	// if !c.IsSet("height") {
-	// 	height = ct.Height()
-	// }
-
-	outPoint, err := newOutPoint(c.String("outpoint"))
-	if err != nil {
-		return err
+	amt := a.Int64("amount")
+	if !a.IsSet("amount") {
+		amt = randInt(1, 500)
 	}
-
-	if !c.IsSet("id") {
-		return fmt.Errorf("flag -id is required")
-	}
-	cid, err := claim.NewIDFromString(c.String("id"))
-	if err != nil {
-		return err
-	}
-	return ct.AddSupport(c.String("name"), *outPoint, amount, cid)
+	return claim.Amount(amt)
 }
 
-func cmdSpendClaim(c *cli.Context) error {
-	outPoint, err := newOutPoint(c.String("outpoint"))
-	if err != nil {
-		return err
+func (a *args) outPoint() wire.OutPoint {
+	if a.err != nil {
+		return wire.OutPoint{}
 	}
-	return ct.SpendClaim(c.String("name"), *outPoint)
-}
-func cmdSpendSupport(c *cli.Context) error {
-	outPoint, err := newOutPoint(c.String("outpoint"))
-	if err != nil {
-		return err
-	}
-	return ct.SpendSupport(c.String("name"), *outPoint)
+	op, err := newOutPoint(a.String("outpoint"))
+	a.err = err
+
+	return *op
 }
 
-func cmdShow(c *cli.Context) error {
-	dump := func(prefix trie.Key, val trie.Value) error {
+func (a *args) name() (name string) {
+	if a.err != nil {
+		return
+	}
+	return a.String("name")
+}
+
+func (a *args) id() (id claim.ID) {
+	if a.err != nil {
+		return
+	}
+	if !a.IsSet("id") {
+		a.err = fmt.Errorf("flag -id is required")
+		return
+	}
+	id, a.err = claim.NewIDFromString(a.String("id"))
+	return
+}
+
+func (a *args) height() (h claim.Height, ok bool) {
+	if a.err != nil {
+		return 0, false
+	}
+	return claim.Height(a.Int64("height")), a.IsSet("height")
+}
+
+func (a *args) json() bool {
+	if a.err != nil {
+		return false
+	}
+	return a.IsSet("json")
+}
+
+func (a *args) all() bool {
+	if a.err != nil {
+		return false
+	}
+	return a.Bool("all")
+}
+
+var showNode = func(showJSON bool) trie.Visit {
+	return func(prefix trie.Key, val trie.Value) error {
 		if val == nil {
 			fmt.Printf("%-8s:\n", prefix)
 			return nil
 		}
-		if !c.IsSet("json") {
+		if !showJSON {
 			fmt.Printf("%-8s: %v\n", prefix, val)
 			return nil
 		}
@@ -227,22 +238,94 @@ func cmdShow(c *cli.Context) error {
 		fmt.Printf("%-8s: %s\n", prefix, b)
 		return nil
 	}
+}
 
-	if !c.IsSet("height") {
-		fmt.Printf("<ClaimTrie Height %d>\n", ct.Height())
-		return ct.Traverse(dump, false, !c.Bool("all"))
+var recall = func(h claim.Height, visit trie.Visit) trie.Visit {
+	return func(prefix trie.Key, val trie.Value) (err error) {
+		n := val.(*claim.Node)
+		for err == nil && n.Height() > h {
+			err = n.Decrement()
+		}
+		if err == nil {
+			err = visit(prefix, val)
+		}
+		for err == nil && n.Height() < ct.Height() {
+			err = n.Redo()
+		}
+		return err
 	}
-	height := claim.Height(c.Int64("height"))
-	fmt.Printf("NOTE: peeking to the past is broken for now. Try RESET command instead\n")
+}
+
+func cmdAddClaim(c *cli.Context) error {
+	a := args{Context: c}
+	amt := a.amount()
+	op := a.outPoint()
+	name := a.name()
+	if a.err != nil {
+		return a.err
+	}
+	return ct.AddClaim(name, op, amt)
+}
+
+func cmdAddSupport(c *cli.Context) error {
+	a := args{Context: c}
+	name := a.name()
+	amt := a.amount()
+	op := a.outPoint()
+	id := a.id()
+	if a.err != nil {
+		return a.err
+	}
+	return ct.AddSupport(name, op, amt, id)
+}
+
+func cmdSpendClaim(c *cli.Context) error {
+	a := args{Context: c}
+	name := a.name()
+	op := a.outPoint()
+	if a.err != nil {
+		return a.err
+	}
+	return ct.SpendClaim(name, op)
+}
+
+func cmdSpendSupport(c *cli.Context) error {
+	a := args{Context: c}
+	name := a.name()
+	op := a.outPoint()
+	if a.err != nil {
+		return a.err
+	}
+	return ct.SpendSupport(name, op)
+}
+
+func cmdShow(c *cli.Context) error {
+	a := args{Context: c}
+	h, setHeight := a.height()
+	setJSON := a.json()
+	setAll := a.all()
+	if a.err != nil {
+		return a.err
+	}
+	if h > ct.Height() {
+		return errInvalidHeight
+	}
+	visit := showNode(setJSON)
+	if !setHeight {
+		fmt.Printf("\n<ClaimTrie Height %d (Stage) >\n\n", ct.Height())
+		return ct.Traverse(visit, false, !setAll)
+	}
+
+	visit = recall(h, visit)
 	for commit := ct.Head(); commit != nil; commit = commit.Prev {
 		meta := commit.Meta.(claimtrie.CommitMeta)
-		fmt.Printf("HEAD: %d/%d\n", height, meta.Height)
-		if height == meta.Height {
-			return commit.MerkleTrie.Traverse(dump, false, !c.Bool("all"))
+		if h == meta.Height {
+			fmt.Printf("\n<ClaimTrie Height %d>\n\n", h)
+			return commit.MerkleTrie.Traverse(visit, false, !setAll)
 		}
 	}
 
-	return fmt.Errorf("commit not found")
+	return errCommitNotFound
 }
 
 func cmdMerkle(c *cli.Context) error {
@@ -251,16 +334,16 @@ func cmdMerkle(c *cli.Context) error {
 }
 
 func cmdCommit(c *cli.Context) error {
-	height := claim.Height(c.Int64("height"))
+	h := claim.Height(c.Int64("height"))
 	if !c.IsSet("height") {
-		height = ct.Height() + 1
+		h = ct.Height() + 1
 	}
-	return ct.Commit(height)
+	return ct.Commit(h)
 }
 
 func cmdReset(c *cli.Context) error {
-	height := claim.Height(c.Int64("height"))
-	return ct.Reset(height)
+	h := claim.Height(c.Int64("height"))
+	return ct.Reset(h)
 }
 
 func cmdLog(c *cli.Context) error {

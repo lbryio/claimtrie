@@ -5,7 +5,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 
 	"github.com/lbryio/claimtrie/claim"
-	"github.com/lbryio/claimtrie/claimnode"
 
 	"github.com/lbryio/claimtrie/trie"
 )
@@ -61,25 +60,23 @@ func (ct *ClaimTrie) Head() *trie.Commit {
 
 // AddClaim adds a Claim to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddClaim(name string, op wire.OutPoint, amt claim.Amount) error {
-	modifier := func(n *claimnode.Node) error {
-		_, err := n.AddClaim(op, amt)
-		return err
+	modifier := func(n *claim.Node) error {
+		return n.AddClaim(claim.New(op, amt))
 	}
 	return updateNode(ct, ct.height, name, modifier)
 }
 
 // AddSupport adds a Support to the Stage of ClaimTrie.
 func (ct *ClaimTrie) AddSupport(name string, op wire.OutPoint, amt claim.Amount, supported claim.ID) error {
-	modifier := func(n *claimnode.Node) error {
-		_, err := n.AddSupport(op, amt, supported)
-		return err
+	modifier := func(n *claim.Node) error {
+		return n.AddSupport(claim.NewSupport(op, amt, supported))
 	}
 	return updateNode(ct, ct.height, name, modifier)
 }
 
 // SpendClaim removes a Claim in the Stage.
 func (ct *ClaimTrie) SpendClaim(name string, op wire.OutPoint) error {
-	modifier := func(n *claimnode.Node) error {
+	modifier := func(n *claim.Node) error {
 		return n.RemoveClaim(op)
 	}
 	return updateNode(ct, ct.height, name, modifier)
@@ -87,7 +84,7 @@ func (ct *ClaimTrie) SpendClaim(name string, op wire.OutPoint) error {
 
 // SpendSupport removes a Support in the Stage.
 func (ct *ClaimTrie) SpendSupport(name string, op wire.OutPoint) error {
-	modifier := func(n *claimnode.Node) error {
+	modifier := func(n *claim.Node) error {
 		return n.RemoveSupport(op)
 	}
 	return updateNode(ct, ct.height, name, modifier)
@@ -123,7 +120,7 @@ func (ct *ClaimTrie) Commit(h claim.Height) error {
 	for i := ct.height + 1; i <= h; i++ {
 		for _, name := range ct.todos[i] {
 			// dummy modifier to have the node brought up to date.
-			modifier := func(n *claimnode.Node) error { return nil }
+			modifier := func(n *claim.Node) error { return nil }
 			if err := updateNode(ct, i, name, modifier); err != nil {
 				return err
 			}
@@ -165,13 +162,13 @@ func (ct *ClaimTrie) Reset(h claim.Height) error {
 
 	// Drop (rollback) any uncommited change, and adjust to the specified height.
 	rollback := func(prefix trie.Key, value trie.Value) error {
-		n := value.(*claimnode.Node)
-		n.Reset()
+		n := value.(*claim.Node)
+		n.RollbackExecuted()
 		return n.AdjustTo(h)
 	}
 	if err := ct.stg.Traverse(rollback, true, true); err != nil {
 		// Rollback a node to a known state can't go wrong.
-		// It's a programming error, and can't recover.
+		// It's a programming error that can't be recovered.
 		panic(err)
 	}
 
@@ -190,17 +187,17 @@ func (ct *ClaimTrie) Reset(h claim.Height) error {
 // updateNode implements a get-modify-set sequence to the node associated with name.
 // After the modifier is applied, the node is evaluated for how soon in the
 // nearest future change. And register it, if any, to the todos for the next updateNode.
-func updateNode(ct *ClaimTrie, h claim.Height, name string, modifier func(n *claimnode.Node) error) error {
+func updateNode(ct *ClaimTrie, h claim.Height, name string, modifier func(n *claim.Node) error) error {
 
 	// Get the node from the Stage, or create one if it did not exist yet.
 	v, err := ct.stg.Get(trie.Key(name))
 	if err == trie.ErrKeyNotFound {
-		v = claimnode.NewNode()
+		v = claim.NewNode()
 	} else if err != nil {
 		return err
 	}
 
-	n := v.(*claimnode.Node)
+	n := v.(*claim.Node)
 
 	// Bring the node state up to date.
 	if err = n.AdjustTo(h); err != nil {

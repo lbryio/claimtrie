@@ -193,6 +193,100 @@ Hello   : {
 claimtrie >
 ```
 
+The following are the corresponding commands in the CLI to reproduce the test.
+Note that when a Toakeover happens, the {TakeoverHeight, BestClaim(OutPoint:Indx)} is pushed to the BestClaims stack.
+This provides sufficient info to update and backtracking the BestClaim at any height.
+
+```block
+claimtrie > c -ht 12
+claimtrie > ac -a 10
+claimtrie > c -ht 13
+claimtrie > s
+
+<ClaimTrie Height 13>
+Hello   :  Height 13, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 10   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+
+claimtrie > c -ht 1000
+claimtrie > ac -a 20
+claimtrie > c -ht 1001
+claimtrie > s
+
+<ClaimTrie Height 1001>
+Hello   :  Height 1000, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 10   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 0    accepted: 1001  active: 1031  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+
+claimtrie > c -ht 1009
+claimtrie > as -a 14 -id ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+claimtrie > c -ht 1010
+claimtrie > s
+
+<ClaimTrie Height 1010>
+Hello   :  Height 1010, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 24   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 0    accepted: 1001  active: 1031  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+
+  S-087acb4f22ab6eb2e6c827624deab7beb02c190056376e0b3a3c3546b79bf216:22  amt: 14                accepted: 1010  active: 1010  id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+
+claimtrie > c -ht 1019
+claimtrie > ac -a 50
+claimtrie > c -ht 1020
+claimtrie > s
+
+<ClaimTrie Height 1020>
+Hello   :  Height 1019, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 24   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 0    accepted: 1001  active: 1031  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+  C-864dc683ed1fbe3c072c2387bca7d74e60c2505f1987054fd70955a2e1c9490b:11  amt: 50   effamt: 0    accepted: 1020  active: 1051  id: 0f2ba15a5c66b978df4a27f52525680a6009185e
+
+  S-087acb4f22ab6eb2e6c827624deab7beb02c190056376e0b3a3c3546b79bf216:22  amt: 14                accepted: 1010  active: 1010  id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+
+claimtrie > c -ht 1031
+claimtrie > s
+
+<ClaimTrie Height 1031>
+Hello   :  Height 1031, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 24   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 20   accepted: 1001  active: 1031  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+  C-864dc683ed1fbe3c072c2387bca7d74e60c2505f1987054fd70955a2e1c9490b:11  amt: 50   effamt: 0    accepted: 1020  active: 1051  id: 0f2ba15a5c66b978df4a27f52525680a6009185e
+
+  S-087acb4f22ab6eb2e6c827624deab7beb02c190056376e0b3a3c3546b79bf216:22  amt: 14                accepted: 1010  active: 1010  id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+
+claimtrie > c -ht 1039
+claimtrie > ac -a 300
+claimtrie > c -ht 1040
+claimtrie > s
+
+<ClaimTrie Height 1040>
+Hello   :  Height 1039, 6f5970c9c13f00c77054d98e5b2c50b1a1bb723d91676cc03f984fac763ec6c3 BestClaims: {13, 31},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 24   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb  <B>
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 20   accepted: 1001  active: 1031  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+  C-864dc683ed1fbe3c072c2387bca7d74e60c2505f1987054fd70955a2e1c9490b:11  amt: 50   effamt: 0    accepted: 1020  active: 1051  id: 0f2ba15a5c66b978df4a27f52525680a6009185e
+  C-26292b27122d04d08fee4e4cc5a5f94681832204cc29d61039c09af9a5298d16:22  amt: 300  effamt: 0    accepted: 1040  active: 1072  id: 270496c0710e525156510e60e4be2ffa6fe2f507
+
+  S-087acb4f22ab6eb2e6c827624deab7beb02c190056376e0b3a3c3546b79bf216:22  amt: 14                accepted: 1010  active: 1010  id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+
+claimtrie > c -ht 1051
+claimtrie > s
+
+<ClaimTrie Height 1051>
+Hello   :  Height 1051, 68dff86c9450e3cf96570f31b6ad8f8d35ae0cbce6cdcb3761910e25a815ee8b BestClaims: {13, 31}, {1051, 22},
+
+  C-2f9b2ca28b30c97122de584e8d784e784bc7bdfb43b3b4bf9de69fc31196571f:31  amt: 10   effamt: 24   accepted: 13   active: 13   id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+  C-74fd7c15b445e7ac2de49a8058ad7dbb070ef31838345feff168dd40c2ef422e:46  amt: 20   effamt: 20   accepted: 1001  active: 1001  id: 2edc6338e9f3654f8b2b878817e029a2b2ecfa9e
+  C-864dc683ed1fbe3c072c2387bca7d74e60c2505f1987054fd70955a2e1c9490b:11  amt: 50   effamt: 50   accepted: 1020  active: 1020  id: 0f2ba15a5c66b978df4a27f52525680a6009185e
+  C-26292b27122d04d08fee4e4cc5a5f94681832204cc29d61039c09af9a5298d16:22  amt: 300  effamt: 300  accepted: 1040  active: 1040  id: 270496c0710e525156510e60e4be2ffa6fe2f507  <B>
+
+  S-087acb4f22ab6eb2e6c827624deab7beb02c190056376e0b3a3c3546b79bf216:22  amt: 14                accepted: 1010  active: 1010  id: ae8b3adc8c8b378c76eae12edf3878357b31c0eb
+```
+
 ## Contributing
 
 coming soon

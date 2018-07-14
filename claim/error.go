@@ -1,4 +1,4 @@
-package claimnode
+package claim
 
 import "fmt"
 
