@@ -16,7 +16,7 @@ type Key []byte
 
 // Value implements value for the MerkleTrie.
 type Value interface {
-	Hash() chainhash.Hash
+	Hash() *chainhash.Hash
 }
 
 // MerkleTrie implements a 256-way prefix tree, which takes Key as key and any value that implements the Value interface.

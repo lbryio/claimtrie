@@ -223,7 +223,7 @@ func (a *args) all() bool {
 
 var showNode = func(showJSON bool) trie.Visit {
 	return func(prefix trie.Key, val trie.Value) error {
-		if val == nil {
+		if val == nil || val.Hash() == nil {
 			fmt.Printf("%-8s:\n", prefix)
 			return nil
 		}

@@ -9,7 +9,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-func calNodeHash(op wire.OutPoint, tookover Height) chainhash.Hash {
+func calNodeHash(op wire.OutPoint, tookover Height) *chainhash.Hash {
 	txHash := chainhash.DoubleHashH(op.Hash[:])
 
 	nOut := []byte(strconv.Itoa(int(op.Index)))
@@ -24,5 +24,6 @@ func calNodeHash(op wire.OutPoint, tookover Height) chainhash.Hash {
 	h = append(h, nOutHash[:]...)
 	h = append(h, heightHash[:]...)
 
-	return chainhash.DoubleHashH(h)
+	hh := chainhash.DoubleHashH(h)
+	return &hh
 }

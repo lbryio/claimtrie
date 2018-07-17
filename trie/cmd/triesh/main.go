@@ -103,8 +103,9 @@ func main() {
 
 type strValue string
 
-func (s strValue) Hash() chainhash.Hash {
-	return chainhash.DoubleHashH([]byte(s))
+func (s strValue) Hash() *chainhash.Hash {
+	h := chainhash.DoubleHashH([]byte(s))
+	return &h
 }
 
 var (

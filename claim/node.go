@@ -165,9 +165,9 @@ func (n *Node) FindNextUpdateHeight() Height {
 }
 
 // Hash calculates the Hash value based on the OutPoint and at which height it tookover.
-func (n *Node) Hash() chainhash.Hash {
+func (n *Node) Hash() *chainhash.Hash {
 	if n.BestClaim() == nil {
-		return chainhash.Hash{}
+		return nil
 	}
 	return calNodeHash(n.BestClaim().OutPoint, n.Tookover())
 }

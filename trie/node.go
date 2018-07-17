@@ -84,8 +84,9 @@ func merkle(n *node) *chainhash.Hash {
 		}
 	}
 	if n.value != nil {
-		h := n.value.Hash()
-		buf = append(buf, h[:]...)
+		if h := n.value.Hash(); h != nil {
+			buf = append(buf, h[:]...)
+		}
 	}
 
 	if len(buf) != 0 {
