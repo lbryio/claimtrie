@@ -24,7 +24,7 @@ Refer to [claimtrie](https://github.com/lbryio/claimtrie/blob/master/cmd/claimtr
 
 ``` quote
 NAME:
-   claimtrie - A CLI tool for ClaimTrie
+   claimtrie - A CLI tool for LBRY ClaimTrie
 
 USAGE:
    main [global options] command [command options] [arguments...]

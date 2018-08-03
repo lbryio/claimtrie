@@ -1,34 +1,34 @@
 package claim
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-
-	"github.com/lbryio/claimtrie/memento"
+	"github.com/pkg/errors"
 )
 
 // Node ...
 type Node struct {
-	mem        memento.Memento
-	height     Height
-	bestClaims map[Height]*Claim
+	name string
 
-	claims   claims
-	supports supports
+	height Height
 
-	updateNext bool
+	best     *Claim
+	tookover Height
+
+	claims   list
+	supports list
+
+	// refer to updateClaim.
+	removed list
+
+	records []*Cmd
 }
 
 // NewNode returns a new Node.
-func NewNode() *Node {
-	return &Node{
-		mem:        memento.Memento{},
-		bestClaims: map[Height]*Claim{0: nil},
-		claims:     claims{},
-		supports:   supports{},
-	}
+func NewNode(name string) *Node {
+	return &Node{name: name}
 }
 
 // Height returns the current height.
@@ -38,175 +38,168 @@ func (n *Node) Height() Height {
 
 // BestClaim returns the best claim at the current height.
 func (n *Node) BestClaim() *Claim {
-	c, _ := bestClaim(n.height, n.bestClaims)
-	return c
+	return n.best
 }
 
-// Tookover returns the height at which current best claim took over.
-func (n *Node) Tookover() Height {
-	_, since := bestClaim(n.height, n.bestClaims)
-	return since
+// AddClaim adds a claim to the node.
+func (n *Node) AddClaim(op OutPoint, amt Amount) error {
+	return n.execute(n.record(CmdAddClaim, op, amt, ID{}))
 }
 
-// AdjustTo increments or decrements current height until it reaches the specific height.
-func (n *Node) AdjustTo(h Height) error {
-	for n.height < h {
-		n.Increment()
-	}
-	for n.height > h {
-		n.Decrement()
-	}
-	return nil
+// SpendClaim spends a claim in the node.
+func (n *Node) SpendClaim(op OutPoint) error {
+	return n.execute(n.record(CmdSpendClaim, op, 0, ID{}))
 }
 
-// Increment ...
-// Increment also clears out the undone stack if it wasn't empty.
-func (n *Node) Increment() error {
-	n.height++
-	n.processBlock()
-	n.mem.Commit()
-	return nil
+// UpdateClaim updates a claim in the node.
+func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID) error {
+	return n.execute(n.record(CmdUpdateClaim, op, amt, id))
 }
 
-// Decrement ...
-func (n *Node) Decrement() error {
-	n.height--
-	n.mem.Undo()
-	return nil
+// AddSupport adds a support in the node.
+func (n *Node) AddSupport(op OutPoint, amt Amount, id ID) error {
+	return n.execute(n.record(CmdAddSupport, op, amt, id))
 }
 
-// Redo ...
-func (n *Node) Redo() error {
-	if err := n.mem.Redo(); err != nil {
-		return err
-	}
-	n.height++
-	return nil
+// SpendSupport spends a spport in the node.
+func (n *Node) SpendSupport(op OutPoint) error {
+	return n.execute(n.record(CmdSpendSupport, op, 0, ID{}))
 }
 
-// RollbackExecuted ...
-func (n *Node) RollbackExecuted() error {
-	n.mem.RollbackExecuted()
-	return nil
-}
-
-// AddClaim ...
-func (n *Node) AddClaim(c *Claim) error {
-	if _, ok := n.claims.has(c.OutPoint); ok {
+func (n *Node) addClaim(op OutPoint, amt Amount) error {
+	if find(byOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
-	next := n.height + 1
-	c.SetAccepted(next).SetActiveAt(next)
-	if n.BestClaim() != nil {
-		c.SetActiveAt(calActiveHeight(next, next, n.Tookover()))
-	}
 
-	n.mem.Execute(cmdAddClaim{node: n, claim: c})
+	accepted := n.height + 1
+	c := New(op, amt).setID(NewID(op)).setAccepted(accepted)
+	c.setActiveAt(accepted + calDelay(accepted, n.tookover))
+	if !isActiveAt(n.best, accepted) {
+		c.setActiveAt(accepted)
+		n.best, n.tookover = c, accepted
+	}
+	n.claims = append(n.claims, c)
 	return nil
 }
 
-// RemoveClaim ...
-func (n *Node) RemoveClaim(op wire.OutPoint) error {
-	c, ok := n.claims.has(op)
-	if !ok {
+func (n *Node) spendClaim(op OutPoint) error {
+	var c *Claim
+	if n.claims, c = remove(n.claims, byOP(op)); c == nil {
 		return ErrNotFound
 	}
-	n.mem.Execute(cmdRemoveClaim{node: n, claim: c})
-
-	if *n.BestClaim() != *c {
-		return nil
-	}
-	n.mem.Execute(updateNodeBestClaim{node: n, height: n.Tookover(), old: c, new: nil})
-	updateActiveHeights(n.height, n.claims, n.supports, &n.mem)
-	n.updateNext = true
+	n.removed = append(n.removed, c)
 	return nil
 }
 
-// AddSupport ...
-func (n *Node) AddSupport(s *Support) error {
-	next := n.height + 1
-	s.SetAccepted(next).SetActiveAt(next)
-	if n.BestClaim() == nil || n.BestClaim().ID != s.ClaimID {
-		s.SetActiveAt(calActiveHeight(next, next, n.Tookover()))
+// A claim update is composed of two separate commands (2 & 3 below).
+//
+//   (1) blk  500: Add Claim (opA, amtA, NewID(opA)
+//     ...
+//   (2) blk 1000: Spend Claim (opA, idA)
+//   (3) blk 1000: Update Claim (opB, amtB, idA)
+//
+// For each block, all the spent claims are kept in n.removed until committed.
+// The paired (spend, update) commands has to happen in the same trasaction.
+func (n *Node) updateClaim(op OutPoint, amt Amount, id ID) error {
+	if find(byOP(op), n.claims, n.supports) != nil {
+		return ErrDuplicate
+	}
+	var c *Claim
+	if n.removed, c = remove(n.removed, byID(id)); c == nil {
+		return errors.Wrapf(ErrNotFound, "remove(n.removed, byID(%s)", id)
 	}
 
-	for _, c := range n.claims {
-		if c.ID != s.ClaimID {
-			continue
-		}
-		n.mem.Execute(cmdAddSupport{node: n, support: s})
+	accepted := n.height + 1
+	c.setOutPoint(op).setAmt(amt).setAccepted(accepted)
+	c.setActiveAt(accepted + calDelay(accepted, n.tookover))
+	if n.best != nil && n.best.ID == id {
+		c.setActiveAt(n.tookover)
+	}
+	n.claims = append(n.claims, c)
+	return nil
+}
+
+func (n *Node) addSupport(op OutPoint, amt Amount, id ID) error {
+	if find(byOP(op), n.claims, n.supports) != nil {
+		return ErrDuplicate
+	}
+	// Accepted by rules. No effects on bidding result though.
+	// It may be spent later.
+	if find(byID(id), n.claims, n.removed) == nil {
+		fmt.Printf("INFO: can't find suooported claim ID: %s\n", id)
+	}
+
+	accepted := n.height + 1
+	s := New(op, amt).setID(id).setAccepted(accepted)
+	s.setActiveAt(accepted + calDelay(accepted, n.tookover))
+	if n.best != nil && n.best.ID == id {
+		s.setActiveAt(accepted)
+	}
+	n.supports = append(n.supports, s)
+	return nil
+}
+
+func (n *Node) spendSupport(op OutPoint) error {
+	var s *Claim
+	if n.supports, s = remove(n.supports, byOP(op)); s != nil {
 		return nil
 	}
-
-	// Is supporting an non-existing Claim aceepted?
 	return ErrNotFound
 }
 
-// RemoveSupport ...
-func (n *Node) RemoveSupport(op wire.OutPoint) error {
-	s, ok := n.supports.has(op)
-	if !ok {
-		return ErrNotFound
+// NextUpdate returns the height at which pending updates should happen.
+// When no pending updates exist, current height is returned.
+func (n *Node) NextUpdate() Height {
+	next := Height(math.MaxInt32)
+	min := func(l list) Height {
+		for _, v := range l {
+			exp := v.expireAt()
+			if n.height >= exp {
+				continue
+			}
+			if v.ActiveAt > n.height && v.ActiveAt < next {
+				next = v.ActiveAt
+			}
+			if exp > n.height && exp < next {
+				next = exp
+			}
+		}
+		return next
 	}
-	n.supports = n.supports.remove(op)
-	n.mem.Execute(cmdRemoveSupport{node: n, support: s})
-	return nil
-}
-
-// FindNextUpdateHeight returns the smallest height in the future that the the state of the node might change.
-// If no such height exists, the current height of the node is returned.
-func (n *Node) FindNextUpdateHeight() Height {
-	if n.updateNext {
-		n.updateNext = false
-		return n.height + 1
+	min(n.claims)
+	min(n.supports)
+	if next == Height(math.MaxInt32) {
+		next = n.height
 	}
-
-	return findNextUpdateHeight(n.height, n.claims, n.supports)
+	return next
 }
 
-// Hash calculates the Hash value based on the OutPoint and at which height it tookover.
-func (n *Node) Hash() *chainhash.Hash {
-	if n.BestClaim() == nil {
-		return nil
-	}
-	return calNodeHash(n.BestClaim().OutPoint, n.Tookover())
-}
-
-// MarshalJSON customizes JSON marshaling of the Node.
-func (n *Node) MarshalJSON() ([]byte, error) {
-	return nodeToJSON(n)
-}
-
-// String implements Stringer interface.
-func (n *Node) String() string {
-	return nodeToString(n)
-}
-
-func (n *Node) processBlock() {
+func (n *Node) bid() {
 	for {
-		if c := n.BestClaim(); c != nil && !isActive(n.height, c.Accepted, c.ActiveAt) {
-			n.mem.Execute(updateNodeBestClaim{node: n, height: n.height, old: n.bestClaims[n.height], new: nil})
-			updateActiveHeights(n.height, n.claims, n.supports, &n.mem)
+		if n.best == nil || n.height >= n.best.expireAt() {
+			n.best, n.tookover = nil, n.height
+			updateActiveHeights(n, n.claims, n.supports)
 		}
 		updateEffectiveAmounts(n.height, n.claims, n.supports)
-		candidate := findCandiadte(n.height, n.claims)
-		if n.BestClaim() == candidate {
-			return
+		c := findCandiadte(n.height, n.claims)
+		if equal(n.best, c) {
+			break
 		}
-		n.mem.Execute(updateNodeBestClaim{node: n, height: n.height, old: n.bestClaims[n.height], new: candidate})
-		updateActiveHeights(n.height, n.claims, n.supports, &n.mem)
+		n.best, n.tookover = c, n.height
+		updateActiveHeights(n, n.claims, n.supports)
 	}
+	n.removed = nil
 }
 
-func updateEffectiveAmounts(h Height, claims claims, supports supports) {
+func updateEffectiveAmounts(h Height, claims, supports list) {
 	for _, c := range claims {
 		c.EffAmt = 0
-		if !isActive(h, c.Accepted, c.ActiveAt) {
+		if !isActiveAt(c, h) {
 			continue
 		}
 		c.EffAmt = c.Amt
 		for _, s := range supports {
-			if !isActive(h, s.Accepted, s.ActiveAt) || s.ClaimID != c.ID {
+			if !isActiveAt(s, h) || s.ID != c.ID {
 				continue
 			}
 			c.EffAmt += s.Amt
@@ -214,88 +207,53 @@ func updateEffectiveAmounts(h Height, claims claims, supports supports) {
 	}
 }
 
-func updateActiveHeights(h Height, claims claims, supports supports, mem *memento.Memento) {
-	for _, v := range claims {
-		if old, new := v.ActiveAt, calActiveHeight(v.Accepted, h, h); old != new {
-			mem.Execute(cmdUpdateClaimActiveHeight{claim: v, old: old, new: new})
-		}
-	}
-	for _, v := range supports {
-		if old, new := v.ActiveAt, calActiveHeight(v.Accepted, h, h); old != new {
-			mem.Execute(cmdUpdateSupportActiveHeight{support: v, old: old, new: new})
+func updateActiveHeights(n *Node, lists ...list) {
+	for _, l := range lists {
+		for _, v := range l {
+			v.ActiveAt = v.Accepted + calDelay(n.height, n.tookover)
 		}
 	}
 }
 
-// bestClaim returns the best claim at specified height and since when it took over.
-func bestClaim(at Height, bestClaims map[Height]*Claim) (*Claim, Height) {
-	var latest Height
-	for k := range bestClaims {
-		if k > at {
-			continue
-		}
-		if k > latest {
-			latest = k
-		}
-	}
-	return bestClaims[latest], latest
-}
-
-func findNextUpdateHeight(h Height, claims claims, supports supports) Height {
-	next := Height(math.MaxInt64)
-	for _, v := range claims {
-		if v.ActiveAt > h && v.ActiveAt < next {
-			next = v.ActiveAt
-		}
-	}
-	for _, v := range supports {
-		if v.ActiveAt > h && v.ActiveAt < next {
-			next = v.ActiveAt
-		}
-	}
-	if next == Height(math.MaxInt64) {
-		return h
-	}
-	return next
-}
-
-func findCandiadte(h Height, claims claims) *Claim {
-	var candidate *Claim
+func findCandiadte(h Height, claims list) *Claim {
+	var c *Claim
 	for _, v := range claims {
 		switch {
-		case v.ActiveAt > h:
+		case !isActiveAt(v, h):
 			continue
-		case candidate == nil:
-			candidate = v
-		case v.EffAmt > candidate.EffAmt:
-			candidate = v
-		case v.EffAmt == candidate.EffAmt && v.seq < candidate.seq:
-			candidate = v
+		case c == nil:
+			c = v
+		case v.EffAmt > c.EffAmt:
+			c = v
+		case v.EffAmt < c.EffAmt:
+			continue
+		case v.Accepted < c.Accepted:
+			c = v
+		case v.Accepted > c.Accepted:
+			continue
+		case outPointLess(c.OutPoint, v.OutPoint):
+			c = v
 		}
 	}
-	return candidate
+	return c
 }
 
-func isActive(h, accepted, activeAt Height) bool {
-	if activeAt > h {
-		// Accepted, but not active yet.
-		return false
-	}
-	if h >= paramExtendedClaimExpirationForkHeight && accepted+paramExtendedClaimExpirationTime <= h {
-		// Expired on post-HF1807 duration
-		return false
-	}
-	if h < paramExtendedClaimExpirationForkHeight && accepted+paramOriginalClaimExpirationTime <= h {
-		// Expired on pre-HF1807 duration
-		return false
-	}
-	return true
-}
-
-func calActiveHeight(Accepted, curr, tookover Height) Height {
+func calDelay(curr, tookover Height) Height {
 	delay := (curr - tookover) / paramActiveDelayFactor
 	if delay > paramMaxActiveDelay {
-		delay = paramMaxActiveDelay
+		return paramMaxActiveDelay
 	}
-	return Accepted + delay
+	return delay
+}
+
+// Hash calculates the Hash value based on the OutPoint and when it tookover.
+func (n *Node) Hash() *chainhash.Hash {
+	if n.best == nil {
+		return nil
+	}
+	return calNodeHash(n.best.OutPoint, n.tookover)
+}
+
+func (n *Node) String() string {
+	return nodeToString(n)
 }

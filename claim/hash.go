@@ -6,10 +6,9 @@ import (
 	"strconv"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
 )
 
-func calNodeHash(op wire.OutPoint, tookover Height) *chainhash.Hash {
+func calNodeHash(op OutPoint, tookover Height) *chainhash.Hash {
 	txHash := chainhash.DoubleHashH(op.Hash[:])
 
 	nOut := []byte(strconv.Itoa(int(op.Index)))

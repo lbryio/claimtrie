@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
-	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 )
 
-// NewID ...
-func NewID(op wire.OutPoint) ID {
+// NewID returns a Claim ID caclculated from Ripemd160(Sha256(OUTPOINT).
+func NewID(op OutPoint) ID {
 	w := bytes.NewBuffer(op.Hash[:])
 	if err := binary.Write(w, binary.BigEndian, op.Index); err != nil {
 		panic(err)
@@ -20,17 +19,22 @@ func NewID(op wire.OutPoint) ID {
 	return id
 }
 
-// NewIDFromString ...
+// NewIDFromString returns a Claim ID from a string.
 func NewIDFromString(s string) (ID, error) {
-	b, err := hex.DecodeString(s)
 	var id ID
-	copy(id[:], b)
+	_, err := hex.Decode(id[:], []byte(s))
+	for i, j := 0, len(id)-1; i < j; i, j = i+1, j-1 {
+		id[i], id[j] = id[j], id[i]
+	}
 	return id, err
 }
 
-// ID ...
+// ID represents a Claim's ID.
 type ID [20]byte
 
 func (id ID) String() string {
+	for i, j := 0, len(id)-1; i < j; i, j = i+1, j-1 {
+		id[i], id[j] = id[j], id[i]
+	}
 	return hex.EncodeToString(id[:])
 }

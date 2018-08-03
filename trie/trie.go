@@ -1,128 +1,200 @@
 package trie
 
 import (
+	"bytes"
+	"fmt"
 	"sync"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/pkg/errors"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 var (
-	// EmptyTrieHash represent the Merkle Hash of an empty MerkleTrie.
-	EmptyTrieHash = *newHashFromStr("0000000000000000000000000000000000000000000000000000000000000001")
+	// ErrResolve is returned when an error occured during resolve.
+	ErrResolve = fmt.Errorf("can't resolve")
+)
+var (
+	// EmptyTrieHash represents the Merkle Hash of an empty Trie.
+	// "0000000000000000000000000000000000000000000000000000000000000001"
+	EmptyTrieHash = &chainhash.Hash{1}
 )
 
-// Key defines the key type of the MerkleTrie.
-type Key []byte
+// Trie implements a 256-way prefix tree.
+type Trie struct {
+	kv KeyValue
+	db *leveldb.DB
 
-// Value implements value for the MerkleTrie.
-type Value interface {
-	Hash() *chainhash.Hash
+	root  *node
+	bufs  *sync.Pool
+	batch *leveldb.Batch
 }
 
-// MerkleTrie implements a 256-way prefix tree, which takes Key as key and any value that implements the Value interface.
-type MerkleTrie struct {
-	mu   *sync.RWMutex
-	root *node
-}
-
-// New returns a MerkleTrie.
-func New() *MerkleTrie {
-	return &MerkleTrie{
-		mu:   &sync.RWMutex{},
-		root: newNode(nil),
+// New returns a Trie.
+func New(kv KeyValue, db *leveldb.DB) *Trie {
+	return &Trie{
+		kv:   kv,
+		db:   db,
+		root: newNode(),
+		bufs: &sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
+			},
+		},
 	}
 }
 
-// Get returns the Value associated with the key, or nil with error.
-// Most common error is ErrMissing, which indicates no Value is associated with the key.
-// However, there could be other errors propagated from I/O layer (TBD).
-func (t *MerkleTrie) Get(key Key) (Value, error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+// SetRoot drops all resolved nodes in the Trie, and set the root with specified hash.
+func (t *Trie) SetRoot(h *chainhash.Hash) {
+	t.root = newNode()
+	t.root.hash = h
+}
 
+// Update updates the nodes along the path to the key.
+// Each node is resolved or created with their Hash cleared.
+func (t *Trie) Update(key Key) error {
 	n := t.root
-	for _, k := range key {
-		if n.links[k] == nil {
-			// Path does not exist.
-			return nil, ErrKeyNotFound
+	for _, ch := range key {
+		if err := t.resolve(n); err != nil {
+			return ErrResolve
 		}
-		n = n.links[k]
+		if n.links[ch] == nil {
+			n.links[ch] = newNode()
+		}
+		n.hash = nil
+		n = n.links[ch]
 	}
-	if n.value == nil {
-		// Path exists, but no Value is associated.
-		// This happens when the key had been deleted, but the MerkleTrie has not nullified yet.
-		return nil, ErrKeyNotFound
+	if err := t.resolve(n); err != nil {
+		return ErrResolve
 	}
-	return n.value, nil
-}
-
-// Update updates the MerkleTrie with specified key-value pair.
-// Setting Value to nil deletes the Value, if exists, associated to the key.
-func (t *MerkleTrie) Update(key Key, val Value) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	update(t.root, key, val)
+	n.hasValue = true
+	n.hash = nil
 	return nil
 }
 
-// Prune removes nodes that do not reach to any value node.
-func (t *MerkleTrie) Prune() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	prune(t.root)
-}
-
-// Size returns the number of values.
-func (t *MerkleTrie) Size() int {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	size := 0 // captured in the closure.
-	fn := func(prefix Key, v Value) error {
-		if v != nil {
-			size++
-		}
+func (t *Trie) resolve(n *node) error {
+	if n.hash == nil {
 		return nil
 	}
-	traverse(t.root, Key{}, fn)
-	return size
+	b, err := t.db.Get(n.hash[:], nil)
+	if err == leveldb.ErrNotFound {
+		return nil
+	} else if err != nil {
+		return errors.Wrapf(err, "db.Get(%s)", n.hash)
+	}
+
+	nb := nbuf(b)
+	n.hasValue = nb.hasValue()
+	for i := 0; i < nb.entries(); i++ {
+		p, h := nb.entry(i)
+		n.links[p] = newNode()
+		n.links[p].hash = h
+	}
+	return nil
 }
 
 // Visit implements callback function invoked when the Value is visited.
 // During the traversal, if a non-nil error is returned, the traversal ends early.
 type Visit func(prefix Key, val Value) error
 
-// Traverse visits every Value in the MerkleTrie and returns error defined by specified Visit function.
-// update indicates if the visit function modify the state of MerkleTrie.
-func (t *MerkleTrie) Traverse(visit Visit, update, valueOnly bool) error {
-	if update {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-	} else {
-		t.mu.RLock()
-		defer t.mu.RUnlock()
-	}
-	fn := func(prefix Key, value Value) error {
-		if !valueOnly || value != nil {
-			return visit(prefix, value)
+// Traverse implements preorder traversal visiting each Value node.
+func (t *Trie) Traverse(visit Visit) error {
+	var traverse func(prefix Key, n *node) error
+	traverse = func(prefix Key, n *node) error {
+		if n == nil {
+			return nil
+		}
+		for ch, n := range n.links {
+			if n == nil || !n.hasValue {
+				continue
+			}
+
+			p := append(prefix, byte(ch))
+			val, err := t.kv.Get(p)
+			if err != nil {
+				return errors.Wrapf(err, "kv.Get(%s)", p)
+			}
+			if err := visit(p, val); err != nil {
+				return err
+			}
+
+			if err := traverse(p, n); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
-	return traverse(t.root, Key{}, fn)
+	buf := make([]byte, 0, 4096)
+	return traverse(buf, t.root)
 }
 
-// MerkleHash calculates the Merkle Hash of the MerkleTrie.
-// If the MerkleTrie is empty, EmptyTrieHash is returned.
-func (t *MerkleTrie) MerkleHash() chainhash.Hash {
-	if merkle(t.root) == nil {
-		return EmptyTrieHash
+// MerkleHash returns the Merkle Hash of the Trie.
+// All nodes must have been resolved before calling this function.
+func (t *Trie) MerkleHash() (*chainhash.Hash, error) {
+	t.batch = &leveldb.Batch{}
+	buf := make([]byte, 0, 4096)
+	if err := t.merkle(buf, t.root); err != nil {
+		return nil, err
 	}
-	return *t.root.hash
+	if t.root.hash == nil {
+		return EmptyTrieHash, nil
+	}
+	if t.db != nil && t.batch.Len() != 0 {
+		if err := t.db.Write(t.batch, nil); err != nil {
+			return nil, errors.Wrapf(err, "db.Write(t.batch, nil)")
+		}
+	}
+	return t.root.hash, nil
 }
 
-func newHashFromStr(s string) *chainhash.Hash {
-	h, _ := chainhash.NewHashFromStr(s)
-	return h
+// merkle recursively resolves the hashes of the node.
+// All nodes must have been resolved before calling this function.
+func (t *Trie) merkle(prefix Key, n *node) error {
+	if n.hash != nil {
+		return nil
+	}
+	b := t.bufs.Get().(*bytes.Buffer)
+	defer t.bufs.Put(b)
+	b.Reset()
+
+	for ch, n := range n.links {
+		if n == nil {
+			continue
+		}
+		p := append(prefix, byte(ch))
+		if err := t.merkle(p, n); err != nil {
+			return err
+		}
+		if n.hash == nil {
+			continue
+		}
+		if err := b.WriteByte(byte(ch)); err != nil {
+			panic(err) // Can't happen. Kepp linter happy.
+		}
+		if _, err := b.Write(n.hash[:]); err != nil {
+			panic(err) // Can't happen. Kepp linter happy.
+		}
+	}
+
+	if n.hasValue {
+		val, err := t.kv.Get(prefix)
+		if err != nil {
+			return errors.Wrapf(err, "t.kv.get(%s)", prefix)
+		}
+		if h := val.Hash(); h != nil {
+			if _, err = b.Write(h[:]); err != nil {
+				panic(err) // Can't happen. Kepp linter happy.
+			}
+		}
+	}
+
+	if b.Len() == 0 {
+		return nil
+	}
+	h := chainhash.DoubleHashH(b.Bytes())
+	n.hash = &h
+	if t.db != nil {
+		t.batch.Put(n.hash[:], b.Bytes())
+	}
+	return nil
 }

@@ -8,9 +8,9 @@ coming soon
 
 ## Usage
 
-``` bash
+``` block
 NAME:
-   claimtrie - A CLI tool for ClaimTrie
+   claimtrie - A CLI tool for LBRY ClaimTrie
 
 USAGE:
    main [global options] command [command options] [arguments...]
@@ -49,7 +49,7 @@ go run ${GOPATH}/src/github.com/lbryio/claimtrie/cmd/claimtrie/main.go sh
 
 Adding claims.
 
-``` bash
+``` block
 claimtrie > add-claim
 
 claimtrie > show
@@ -90,14 +90,14 @@ claimtrie > commit
 
 Commit another claim.
 
-```bash
+``` block
 claimtrie > add-claim --amount 100
 claimtrie > commit
 ```
 
 Show logs
 
-``` bash
+```  block
 claimtrie > log
 
 height: 2, commit 9e2a2cf0e7f2a60e195ce46b261d6a953a3cbb68ef6b3274543ec8fdbf8a171b
@@ -107,7 +107,7 @@ height: 0, commit 00000000000000000000000000000000000000000000000000000000000000
 
 Show current status.
 
-```bash
+``` block
 claimtrie > show
 <BestBlock: 2>
 Hello   : {
@@ -154,7 +154,7 @@ Hello   : {
 
 Reset the history to height 1.
 
-``` bash
+``` block
 claimtrie > reset --height 1
 
 claimtrie > show
@@ -302,4 +302,4 @@ Our PGP key is [here](https://keybase.io/lbry/key.asc) if you need it.
 
 ## Contact
 
-The primary contact for this project is [@roylee17](https://github.com/roylee) (roylee@lbry.io)
+The primary contact for this project is [@roylee17](https://github.com/roylee17) (roylee@lbry.io)
