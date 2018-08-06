@@ -1,7 +1,6 @@
 package claim
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -22,8 +21,6 @@ type Node struct {
 
 	// refer to updateClaim.
 	removed list
-
-	records []*Cmd
 }
 
 // NewNode returns a new Node.
@@ -41,36 +38,11 @@ func (n *Node) BestClaim() *Claim {
 	return n.best
 }
 
-// AddClaim adds a claim to the node.
+// AddClaim adds a Claim to the Node.
 func (n *Node) AddClaim(op OutPoint, amt Amount) error {
-	return n.execute(n.record(CmdAddClaim, op, amt, ID{}))
-}
-
-// SpendClaim spends a claim in the node.
-func (n *Node) SpendClaim(op OutPoint) error {
-	return n.execute(n.record(CmdSpendClaim, op, 0, ID{}))
-}
-
-// UpdateClaim updates a claim in the node.
-func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID) error {
-	return n.execute(n.record(CmdUpdateClaim, op, amt, id))
-}
-
-// AddSupport adds a support in the node.
-func (n *Node) AddSupport(op OutPoint, amt Amount, id ID) error {
-	return n.execute(n.record(CmdAddSupport, op, amt, id))
-}
-
-// SpendSupport spends a spport in the node.
-func (n *Node) SpendSupport(op OutPoint) error {
-	return n.execute(n.record(CmdSpendSupport, op, 0, ID{}))
-}
-
-func (n *Node) addClaim(op OutPoint, amt Amount) error {
 	if find(byOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
-
 	accepted := n.height + 1
 	c := New(op, amt).setID(NewID(op)).setAccepted(accepted)
 	c.setActiveAt(accepted + calDelay(accepted, n.tookover))
@@ -82,7 +54,8 @@ func (n *Node) addClaim(op OutPoint, amt Amount) error {
 	return nil
 }
 
-func (n *Node) spendClaim(op OutPoint) error {
+// SpendClaim spends a Claim in the Node.
+func (n *Node) SpendClaim(op OutPoint) error {
 	var c *Claim
 	if n.claims, c = remove(n.claims, byOP(op)); c == nil {
 		return ErrNotFound
@@ -91,6 +64,7 @@ func (n *Node) spendClaim(op OutPoint) error {
 	return nil
 }
 
+// UpdateClaim updates a Claim in the Node.
 // A claim update is composed of two separate commands (2 & 3 below).
 //
 //   (1) blk  500: Add Claim (opA, amtA, NewID(opA)
@@ -100,7 +74,7 @@ func (n *Node) spendClaim(op OutPoint) error {
 //
 // For each block, all the spent claims are kept in n.removed until committed.
 // The paired (spend, update) commands has to happen in the same trasaction.
-func (n *Node) updateClaim(op OutPoint, amt Amount, id ID) error {
+func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID) error {
 	if find(byOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
@@ -119,14 +93,15 @@ func (n *Node) updateClaim(op OutPoint, amt Amount, id ID) error {
 	return nil
 }
 
-func (n *Node) addSupport(op OutPoint, amt Amount, id ID) error {
+// AddSupport adds a Support to the Node.
+func (n *Node) AddSupport(op OutPoint, amt Amount, id ID) error {
 	if find(byOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
 	// Accepted by rules. No effects on bidding result though.
 	// It may be spent later.
 	if find(byID(id), n.claims, n.removed) == nil {
-		fmt.Printf("INFO: can't find suooported claim ID: %s\n", id)
+		// fmt.Printf("INFO: can't find suooported claim ID: %s for %s\n", id, n.name)
 	}
 
 	accepted := n.height + 1
@@ -139,12 +114,33 @@ func (n *Node) addSupport(op OutPoint, amt Amount, id ID) error {
 	return nil
 }
 
-func (n *Node) spendSupport(op OutPoint) error {
+// SpendSupport spends a support in the Node.
+func (n *Node) SpendSupport(op OutPoint) error {
 	var s *Claim
 	if n.supports, s = remove(n.supports, byOP(op)); s != nil {
 		return nil
 	}
 	return ErrNotFound
+}
+
+// AdjustTo increments current height until it reaches the specific height.
+func (n *Node) AdjustTo(ht Height) *Node {
+	if ht <= n.height {
+		return n
+	}
+	for n.height < ht {
+		n.height++
+		n.bid()
+		next := n.NextUpdate()
+		if next > ht || next == n.height {
+			n.height = ht
+			break
+		}
+		n.height = next
+		n.bid()
+	}
+	n.bid()
+	return n
 }
 
 // NextUpdate returns the height at which pending updates should happen.
@@ -191,15 +187,15 @@ func (n *Node) bid() {
 	n.removed = nil
 }
 
-func updateEffectiveAmounts(h Height, claims, supports list) {
+func updateEffectiveAmounts(ht Height, claims, supports list) {
 	for _, c := range claims {
 		c.EffAmt = 0
-		if !isActiveAt(c, h) {
+		if !isActiveAt(c, ht) {
 			continue
 		}
 		c.EffAmt = c.Amt
 		for _, s := range supports {
-			if !isActiveAt(s, h) || s.ID != c.ID {
+			if !isActiveAt(s, ht) || s.ID != c.ID {
 				continue
 			}
 			c.EffAmt += s.Amt
@@ -215,11 +211,11 @@ func updateActiveHeights(n *Node, lists ...list) {
 	}
 }
 
-func findCandiadte(h Height, claims list) *Claim {
+func findCandiadte(ht Height, claims list) *Claim {
 	var c *Claim
 	for _, v := range claims {
 		switch {
-		case !isActiveAt(v, h):
+		case !isActiveAt(v, ht):
 			continue
 		case c == nil:
 			c = v

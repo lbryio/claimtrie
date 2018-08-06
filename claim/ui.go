@@ -22,8 +22,8 @@ func export(n *Node) interface{} {
 	}{
 		Height:     n.height,
 		Hash:       hash,
-		NextUpdate: n.NextUpdate(),
 		Tookover:   n.tookover,
+		NextUpdate: n.NextUpdate(),
 		BestClaim:  n.best,
 		Claims:     n.claims,
 		Supports:   n.supports,
@@ -39,7 +39,7 @@ func nodeToString(n *Node) string {
   {{end}}
 {{- end}}
 {{- if .Supports}}
-  S {{range .Supports}}{{.}}
+  {{range .Supports}}S {{.}}
   {{end}}
 {{- end}}`
 
@@ -54,6 +54,6 @@ func nodeToString(n *Node) string {
 }
 
 func claimToString(c *Claim) string {
-	return fmt.Sprintf("%-68s id: %s accepted: %3d  active: %3d, amt: %12d  effamt: %3d",
+	return fmt.Sprintf("%-68s id: %s accepted: %6d  active: %6d, amt: %12d  effamt: %12d",
 		c.OutPoint, c.ID, c.Accepted, c.ActiveAt, c.Amt, c.EffAmt)
 }

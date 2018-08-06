@@ -35,8 +35,8 @@ type Claim struct {
 func (c *Claim) setOutPoint(op OutPoint) *Claim { c.OutPoint = op; return c }
 func (c *Claim) setID(id ID) *Claim             { c.ID = id; return c }
 func (c *Claim) setAmt(amt Amount) *Claim       { c.Amt = amt; return c }
-func (c *Claim) setAccepted(h Height) *Claim    { c.Accepted = h; return c }
-func (c *Claim) setActiveAt(h Height) *Claim    { c.ActiveAt = h; return c }
+func (c *Claim) setAccepted(ht Height) *Claim   { c.Accepted = ht; return c }
+func (c *Claim) setActiveAt(ht Height) *Claim   { c.ActiveAt = ht; return c }
 func (c *Claim) String() string                 { return claimToString(c) }
 
 func (c *Claim) expireAt() Height {
@@ -46,8 +46,8 @@ func (c *Claim) expireAt() Height {
 	return c.Accepted + paramOriginalClaimExpirationTime
 }
 
-func isActiveAt(c *Claim, h Height) bool {
-	return c != nil && c.ActiveAt <= h && c.expireAt() > h
+func isActiveAt(c *Claim, ht Height) bool {
+	return c != nil && c.ActiveAt <= ht && c.expireAt() > ht
 }
 
 func equal(a, b *Claim) bool {

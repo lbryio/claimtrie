@@ -3,6 +3,7 @@ package claimtrie
 import (
 	"fmt"
 
+	"github.com/lbryio/claimtrie/change"
 	"github.com/lbryio/claimtrie/claim"
 	"github.com/lbryio/claimtrie/nodemgr"
 	"github.com/lbryio/claimtrie/trie"
@@ -14,140 +15,135 @@ import (
 
 // ClaimTrie implements a Merkle Trie supporting linear history of commits.
 type ClaimTrie struct {
-	height claim.Height
-	head   *Commit
-	stg    *trie.Trie
-	nm     *nodemgr.NodeMgr
+	cm *CommitMgr
+	nm *nodemgr.NodeMgr
+	tr *trie.Trie
 }
 
 // New returns a ClaimTrie.
-func New(dbTrie, dbNodeMgr *leveldb.DB) *ClaimTrie {
+func New(dbCommit, dbTrie, dbNodeMgr *leveldb.DB) *ClaimTrie {
 	nm := nodemgr.New(dbNodeMgr)
+	cm := NewCommitMgr(dbCommit)
+
 	return &ClaimTrie{
-		head: newCommit(nil, CommitMeta{0}, trie.EmptyTrieHash),
-		nm:   nm,
-		stg:  trie.New(nm, dbTrie),
+		cm: cm,
+		nm: nm,
+		tr: trie.New(nm, dbTrie),
 	}
+}
+
+// Load loads ClaimTrie, NodeManager, Trie from databases.
+func (ct *ClaimTrie) Load() error {
+	if err := ct.cm.Load(); err != nil {
+		return errors.Wrapf(err, "cm.Load()")
+	}
+	fmt.Printf("%d of commits loaded. Head: %d\n", len(ct.cm.commits), ct.cm.head.Meta.Height)
+
+	ct.nm.Load(ct.Height())
+	fmt.Printf("%d of nodes loaded.\n", ct.nm.Size())
+
+	ct.tr.SetRoot(ct.cm.Head().MerkleRoot)
+	fmt.Printf("Trie root: %s.\n", ct.MerkleHash())
+	return nil
+}
+
+// Save saves ClaimTrie state to database.
+func (ct *ClaimTrie) Save() error {
+	if err := ct.cm.Save(); err != nil {
+		return errors.Wrapf(err, "cm.Save()")
+	}
+	return nil
 }
 
 // Height returns the highest height of blocks commited to the ClaimTrie.
 func (ct *ClaimTrie) Height() claim.Height {
-	return ct.height
+	return ct.cm.Head().Meta.Height
 }
 
 // Head returns the tip commit in the commit database.
 func (ct *ClaimTrie) Head() *Commit {
-	return ct.head
+	return ct.cm.Head()
 }
 
-// Trie returns the Stage of the claimtrie .
+// Trie returns the MerkleTrie of the ClaimTrie .
 func (ct *ClaimTrie) Trie() *trie.Trie {
-	return ct.stg
+	return ct.tr
 }
 
-// NodeMgr returns the Node Manager of the claimtrie .
+// NodeMgr returns the Node Manager of the ClaimTrie .
 func (ct *ClaimTrie) NodeMgr() *nodemgr.NodeMgr {
 	return ct.nm
 }
 
-// AddClaim adds a Claim to the Stage.
+// CommitMgr returns the Commit Manager of the ClaimTrie .
+func (ct *ClaimTrie) CommitMgr() *CommitMgr {
+	return ct.cm
+}
+
+// AddClaim adds a Claim to the ClaimTrie.
 func (ct *ClaimTrie) AddClaim(name string, op claim.OutPoint, amt claim.Amount) error {
-	modifier := func(n *claim.Node) error {
-		return n.AddClaim(op, amt)
-	}
-	return ct.updateNode(name, modifier)
+	c := change.New(change.AddClaim).SetOP(op).SetAmt(amt)
+	return ct.modify(name, c)
 }
 
-// SpendClaim spend a Claim in the Stage.
+// SpendClaim spend a Claim in the ClaimTrie.
 func (ct *ClaimTrie) SpendClaim(name string, op claim.OutPoint) error {
-	modifier := func(n *claim.Node) error {
-		return n.SpendClaim(op)
-	}
-	return ct.updateNode(name, modifier)
+	c := change.New(change.SpendClaim).SetOP(op)
+	return ct.modify(name, c)
 }
 
-// UpdateClaim updates a Claim in the Stage.
+// UpdateClaim updates a Claim in the ClaimTrie.
 func (ct *ClaimTrie) UpdateClaim(name string, op claim.OutPoint, amt claim.Amount, id claim.ID) error {
-	modifier := func(n *claim.Node) error {
-		return n.UpdateClaim(op, amt, id)
-	}
-	return ct.updateNode(name, modifier)
+	c := change.New(change.UpdateClaim).SetOP(op).SetAmt(amt).SetID(id)
+	return ct.modify(name, c)
 }
 
-// AddSupport adds a Support to the Stage.
+// AddSupport adds a Support to the ClaimTrie.
 func (ct *ClaimTrie) AddSupport(name string, op claim.OutPoint, amt claim.Amount, id claim.ID) error {
-	modifier := func(n *claim.Node) error {
-		return n.AddSupport(op, amt, id)
-	}
-	return ct.updateNode(name, modifier)
+	c := change.New(change.AddSupport).SetOP(op).SetAmt(amt).SetID(id)
+	return ct.modify(name, c)
 }
 
-// SpendSupport spend a support in the Stage.
+// SpendSupport spend a support in the ClaimTrie.
 func (ct *ClaimTrie) SpendSupport(name string, op claim.OutPoint) error {
-	modifier := func(n *claim.Node) error {
-		return n.SpendSupport(op)
-	}
-	return ct.updateNode(name, modifier)
+	c := change.New(change.SpendSupport).SetOP(op)
+	return ct.modify(name, c)
 }
 
-// Traverse visits Nodes in the Stage.
-func (ct *ClaimTrie) Traverse(visit trie.Visit) error {
-	return ct.stg.Traverse(visit)
-}
-
-// MerkleHash returns the Merkle Hash of the Stage.
-func (ct *ClaimTrie) MerkleHash() (*chainhash.Hash, error) {
-	// ct.nm.UpdateAll(ct.stg.Update)
-	return ct.stg.MerkleHash()
-}
-
-// Commit commits the current Stage into database.
-func (ct *ClaimTrie) Commit(h claim.Height) error {
-	if h < ct.height {
-		return errors.Wrapf(ErrInvalidHeight, "%d < ct.height %d", h, ct.height)
+func (ct *ClaimTrie) modify(name string, c *change.Change) error {
+	c.SetHeight(ct.Height() + 1).SetName(name)
+	if err := ct.nm.ModifyNode(name, c); err != nil {
+		return err
 	}
-
-	for i := ct.height + 1; i <= h; i++ {
-		if err := ct.nm.CatchUp(i, ct.stg.Update); err != nil {
-			return errors.Wrapf(err, "nm.CatchUp(%d, stg.Update)", i)
-		}
-	}
-	hash, err := ct.MerkleHash()
-	if err != nil {
-		return errors.Wrapf(err, "MerkleHash()")
-	}
-	commit := newCommit(ct.head, CommitMeta{Height: h}, hash)
-	ct.head = commit
-	ct.height = h
-	ct.stg.SetRoot(hash)
+	ct.tr.Update([]byte(name))
 	return nil
 }
 
-// Reset reverts the Stage to the current or previous height specified.
-func (ct *ClaimTrie) Reset(h claim.Height) error {
-	if h > ct.height {
-		return errors.Wrapf(ErrInvalidHeight, "%d > ct.height %d", h, ct.height)
-	}
-	fmt.Printf("ct.Reset from %d to %d\n", ct.height, h)
-	commit := ct.head
-	for commit.Meta.Height > h {
-		commit = commit.Prev
-	}
-	if err := ct.nm.Reset(h); err != nil {
-		return errors.Wrapf(err, "nm.Reset(%d)", h)
-	}
-	ct.head = commit
-	ct.height = h
-	ct.stg.SetRoot(commit.MerkleRoot)
-	return nil
+// MerkleHash returns the Merkle Hash of the ClaimTrie.
+func (ct *ClaimTrie) MerkleHash() *chainhash.Hash {
+	return ct.tr.MerkleHash()
 }
 
-func (ct *ClaimTrie) updateNode(name string, modifier func(n *claim.Node) error) error {
-	if err := ct.nm.ModifyNode(name, ct.height, modifier); err != nil {
-		return errors.Wrapf(err, "nm.ModifyNode(%s, %d)", name, ct.height)
+// Commit commits the current changes into database.
+func (ct *ClaimTrie) Commit(ht claim.Height) {
+	if ht < ct.Height() {
+		return
 	}
-	if err := ct.stg.Update(trie.Key(name)); err != nil {
-		return errors.Wrapf(err, "stg.Update(%s)", name)
+	for i := ct.Height() + 1; i <= ht; i++ {
+		ct.nm.CatchUp(i, ct.tr.Update)
 	}
+	h := ct.MerkleHash()
+	ct.cm.Commit(ht, h)
+	ct.tr.SetRoot(h)
+}
+
+// Reset resets the tip commit to a previous height specified.
+func (ct *ClaimTrie) Reset(ht claim.Height) error {
+	if ht > ct.Height() {
+		return ErrInvalidHeight
+	}
+	ct.cm.Reset(ht)
+	ct.nm.Reset(ht)
+	ct.tr.SetRoot(ct.Head().MerkleRoot)
 	return nil
 }

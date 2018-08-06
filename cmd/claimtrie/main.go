@@ -3,46 +3,45 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/lbryio/claimtrie"
+	"github.com/lbryio/claimtrie/cfg"
 	"github.com/lbryio/claimtrie/claim"
-	"github.com/lbryio/claimtrie/trie"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcutil"
+	"github.com/pkg/errors"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/urfave/cli"
 )
 
 var (
 	ct *claimtrie.ClaimTrie
-
-	defaultHomeDir = btcutil.AppDataDir("lbrycrd.go", false)
-	defaultDataDir = filepath.Join(defaultHomeDir, "data")
-	dbTriePath     = filepath.Join(defaultDataDir, "dbTrie")
 )
 
 var (
-	all    bool
-	chk    bool
-	name   string
-	height claim.Height
-	amt    claim.Amount
-	op     claim.OutPoint
-	id     claim.ID
+	all     bool
+	chk     bool
+	dump    bool
+	verbose bool
+	name    string
+	height  claim.Height
+	amt     claim.Amount
+	op      claim.OutPoint
+	id      claim.ID
 )
 
 var (
 	flagAll      = cli.BoolFlag{Name: "all, a", Usage: "Show all nodes", Destination: &all}
-	flagCheck    = cli.BoolFlag{Name: "chk, c", Usage: "Check Merkle Hash during importing", Destination: &chk}
+	flagCheck    = cli.BoolTFlag{Name: "chk, c", Usage: "Check Merkle Hash during importing", Destination: &chk}
+	flagDump     = cli.BoolFlag{Name: "dump, d", Usage: "Dump cmds", Destination: &dump}
+	flagVerbose  = cli.BoolFlag{Name: "verbose, v", Usage: "Verbose (will be replaced by loglevel)", Destination: &verbose}
 	flagAmount   = cli.Int64Flag{Name: "amount, a", Usage: "Amount", Destination: (*int64)(&amt)}
 	flagHeight   = cli.Int64Flag{Name: "height, ht", Usage: "Height"}
 	flagName     = cli.StringFlag{Name: "name, n", Value: "Hello", Usage: "Name", Destination: &name}
@@ -105,22 +104,22 @@ func main() {
 		{
 			Name:    "show",
 			Aliases: []string{"s"},
-			Usage:   "Show the status of Stage)",
+			Usage:   "Show the status of nodes)",
 			Before:  parseArgs,
 			Action:  cmdShow,
-			Flags:   []cli.Flag{flagAll, flagName, flagHeight},
+			Flags:   []cli.Flag{flagAll, flagName, flagHeight, flagDump},
 		},
 		{
 			Name:    "merkle",
 			Aliases: []string{"m"},
-			Usage:   "Show the Merkle Hash of the Stage.",
+			Usage:   "Show the Merkle Hash of the ClaimTrie.",
 			Before:  parseArgs,
 			Action:  cmdMerkle,
 		},
 		{
 			Name:    "commit",
 			Aliases: []string{"c"},
-			Usage:   "Commit the current Stage to database.",
+			Usage:   "Commit the current changes to database.",
 			Before:  parseArgs,
 			Action:  cmdCommit,
 			Flags:   []cli.Flag{flagHeight},
@@ -128,7 +127,7 @@ func main() {
 		{
 			Name:    "reset",
 			Aliases: []string{"r"},
-			Usage:   "Reset the Head commit and Stage to a specified commit.",
+			Usage:   "Reset the Head commit and a specified commit (by Height).",
 			Before:  parseArgs,
 			Action:  cmdReset,
 			Flags:   []cli.Flag{flagHeight},
@@ -141,12 +140,35 @@ func main() {
 			Action:  cmdLog,
 		},
 		{
+			Name:    "ipmort",
+			Aliases: []string{"i"},
+			Usage:   "Import changes from datbase.",
+			Before:  parseArgs,
+			Action:  cmdImport,
+			Flags:   []cli.Flag{flagHeight, flagCheck, flagVerbose},
+		},
+		{
 			Name:    "load",
 			Aliases: []string{"ld"},
-			Usage:   "Load prerecorded command from datbase.",
+			Usage:   "Load nodes from datbase.",
 			Before:  parseArgs,
 			Action:  cmdLoad,
-			Flags:   []cli.Flag{flagHeight, flagCheck},
+			Flags:   []cli.Flag{},
+		},
+		{
+			Name:    "save",
+			Aliases: []string{"sv"},
+			Usage:   "Save nodes to datbase.",
+			Before:  parseArgs,
+			Action:  cmdSave,
+			Flags:   []cli.Flag{},
+		},
+		{
+			Name:   "erase",
+			Usage:  "Erase datbase",
+			Before: parseArgs,
+			Action: cmdErase,
+			Flags:  []cli.Flag{},
 		},
 		{
 			Name:    "shell",
@@ -157,12 +179,28 @@ func main() {
 		},
 	}
 
-	dbTrie, err := leveldb.OpenFile(dbTriePath, nil)
+	path := cfg.DefaultConfig(cfg.TrieDB)
+	dbTrie, err := leveldb.OpenFile(path, nil)
 	if err != nil {
-		log.Fatalf("can't open dbTrie at %s, err: %s\n", dbTriePath, err)
+		log.Fatalf("can't open %s, err: %s\n", path, err)
 	}
-	fmt.Printf("dbTriePath: %q\n", dbTriePath)
-	ct = claimtrie.New(dbTrie, nil)
+	fmt.Printf("opened %q\n", path)
+
+	path = cfg.DefaultConfig(cfg.NodeDB)
+	dbNodeMgr, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		log.Fatalf("can't open %s, err: %s\n", path, err)
+	}
+	fmt.Printf("opened %q\n", path)
+
+	path = cfg.DefaultConfig(cfg.CommitDB)
+	dbCommit, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		log.Fatalf("can't open %s, err: %s\n", path, err)
+	}
+	fmt.Printf("opened %q\n", path)
+
+	ct = claimtrie.New(dbCommit, dbTrie, dbNodeMgr)
 	if err := app.Run(os.Args); err != nil {
 		fmt.Printf("error: %s\n", err)
 	}
@@ -195,22 +233,18 @@ func cmdSpendSupport(c *cli.Context) error {
 }
 
 func cmdShow(c *cli.Context) error {
-	fmt.Printf("\n<ClaimTrie Height %d (Nodes) >\n\n", ct.Height())
+	fmt.Printf("\n<ClaimTrie Height %d >\n\n", ct.Height())
 	if all {
 		name = ""
 	}
-	return ct.NodeMgr().Show(name)
-
-	// fmt.Printf("\n<ClaimTrie Height %d (Stage) >\n\n", ct.Height())
-	// return ct.Traverse(showNode())
+	if !c.IsSet("height") {
+		height = ct.Height()
+	}
+	return ct.NodeMgr().Show(name, height, dump)
 }
 
 func cmdMerkle(c *cli.Context) error {
-	h, err := ct.MerkleHash()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%s at %d\n", h, ct.Height())
+	fmt.Printf("%s at %d\n", ct.MerkleHash(), ct.Height())
 	return nil
 }
 
@@ -218,7 +252,8 @@ func cmdCommit(c *cli.Context) error {
 	if !c.IsSet("height") {
 		height = ct.Height() + 1
 	}
-	return ct.Commit(height)
+	ct.Commit(height)
+	return nil
 }
 
 func cmdReset(c *cli.Context) error {
@@ -227,14 +262,46 @@ func cmdReset(c *cli.Context) error {
 
 func cmdLog(c *cli.Context) error {
 	visit := func(c *claimtrie.Commit) {
-		meta := c.Meta
-		fmt.Printf("%s at %d\n", c.MerkleRoot, meta.Height)
+		fmt.Printf("%s at %d\n", c.MerkleRoot, c.Meta.Height)
 	}
-	return claimtrie.Log(ct.Head(), visit)
+	ct.CommitMgr().Log(ct.Height(), visit)
+	return nil
+}
+
+func cmdImport(c *cli.Context) error {
+	path := cfg.DefaultConfig(cfg.ClaimScriptDB)
+	db, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		return errors.Wrapf(err, "path %s", path)
+	}
+	defer db.Close()
+	if err = claimtrie.Load(db, ct, height, verbose, chk); err != nil {
+		return err
+	}
+	return nil
 }
 
 func cmdLoad(c *cli.Context) error {
-	return claimtrie.Load(ct, height, chk)
+	return ct.Load()
+}
+
+func cmdSave(c *cli.Context) error {
+	return ct.Save()
+}
+
+func cmdErase(c *cli.Context) error {
+	if err := os.RemoveAll(cfg.DefaultConfig(cfg.CommitDB)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(cfg.DefaultConfig(cfg.NodeDB)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(cfg.DefaultConfig(cfg.TrieDB)); err != nil {
+		return err
+	}
+	fmt.Printf("Databses erased. Exiting...\n")
+	os.Exit(0)
+	return nil
 }
 
 func cmdShell(app *cli.App) {
@@ -248,7 +315,7 @@ func cmdShell(app *cli.App) {
 		}
 	}()
 	defer close(sigs)
-	// signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	for {
 		fmt.Printf("%s > ", app.Name)
 		text, err := reader.ReadString('\n')
@@ -260,6 +327,9 @@ func cmdShell(app *cli.App) {
 			continue
 		}
 		if text == "quit" || text == "q" {
+			if err = ct.Save(); err != nil {
+				fmt.Printf("ct.Save() failed, err: %s\n", err)
+			}
 			break
 		}
 		err = app.Run(append(os.Args[1:], strings.Split(text, " ")...))
@@ -334,30 +404,4 @@ func parseID(c *cli.Context) error {
 	var err error
 	id, err = claim.NewIDFromString(c.String("id"))
 	return err
-}
-
-var showNode = func() trie.Visit {
-	return func(prefix trie.Key, val trie.Value) error {
-		if val == nil || val.Hash() == nil {
-			fmt.Printf("%-8s:\n", prefix)
-			return nil
-		}
-		fmt.Printf("%-8s: %v\n", prefix, val)
-		return nil
-	}
-}
-
-var recall = func(h claim.Height, visit trie.Visit) trie.Visit {
-	return func(prefix trie.Key, val trie.Value) error {
-		n := val.(*claim.Node)
-		old := n.Height()
-		err := n.Recall(h)
-		if err == nil {
-			err = visit(prefix, val)
-		}
-		if err == nil {
-			err = n.AdjustTo(old)
-		}
-		return err
-	}
 }
