@@ -4,25 +4,15 @@ coming soon
 
 ## Installation
 
-coming soon
-
-## Usage
-
-coming soon
-
-## Running from Source
-
-This project requires [Go v1.10](https://golang.org/doc/install) or higher.
-
 ``` bash
 go get -u -v github.com/lbryio/claimtrie
 ```
 
-## Examples
+## Usage
 
-Refer to [claimtrie](https://github.com/lbryio/claimtrie/blob/master/cmd/claimtrie) for an interactive CLI tool.
+Refer to [claimtrie](https://github.com/lbryio/claimtrie/blob/master/cmd/claimtrie) for an interactive CLI tool as example.
 
-``` quote
+``` block
 NAME:
    claimtrie - A CLI tool for LBRY ClaimTrie
 
@@ -33,15 +23,20 @@ VERSION:
    0.0.1
 
 COMMANDS:
-     add-claim, ac      Claim a name with specified amount. (outPoint is generated randomly, if unspecified)
-     add-support, as    Add support to a specified Claim. (outPoint is generated randomly, if unspecified)
-     spend-claim, sc    Spend a specified Claim.
+     add-claim, ac      Claim a name.
+     spend-claim, sc    Spend a Claim.
+     update-claim, uc   Update a Claim.
+     add-support, as    Support a Claim.
      spend-support, ss  Spend a specified Support.
-     show, s            Show the Key-Value pairs of the Stage or specified commit. (links nodes are showed if -a is also specified)
-     merkle, m          Show the Merkle Hash of the Stage.
-     commit, c          Commit the current Stage to commit database.
-     reset, r           Reset the Stage to a specified commit.
+     show, s            Show the status of nodes)
+     merkle, m          Show the Merkle Hash of the ClaimTrie.
+     commit, c          Commit the current changes to database.
+     reset, r           Reset the Head commit and a specified commit (by Height).
      log, l             List the commits in the coommit database.
+     ipmort, i          Import changes from datbase.
+     load, ld           Load nodes from datbase.
+     save, sv           Save nodes to datbase.
+     erase              Erase datbase
      shell, sh          Enter interactive mode
      help, h            Shows a list of commands or help for one command
 
@@ -49,6 +44,13 @@ GLOBAL OPTIONS:
    --help, -h     show help
    --version, -v  print the version
 ```
+
+## Running from Source
+
+This project requires [Go v1.10](https://golang.org/doc/install) or higher.
+
+## Examples
+
 
 ## Testing
 
@@ -72,4 +74,4 @@ Our PGP key is [here](https://keybase.io/lbry/key.asc) if you need it.
 
 ## Contact
 
-The primary contact for this project is [@roylee17](https://github.com/roylee17) (roylee@lbry.io)
+The primary contact for this project is [@roylee17](https://github.com/roylee17) (roylee@lbry.io) or [@lyoshenka](https://github.com/lyoshenka) (grin@lbry.io)
