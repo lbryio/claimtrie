@@ -125,7 +125,7 @@ func (nm *NodeMgr) Show(name string, ht claim.Height, dump bool) error {
 		}
 		fmt.Printf("[%s] %s\n", name, n)
 		if dump {
-			change.NewChangeList(nm.db, name).Load().Dump()
+			change.NewChangeList(nm.db, name).Load().Truncate(ht).Dump()
 		}
 	}
 	return nil
