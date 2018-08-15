@@ -41,7 +41,7 @@ func (c *Claim) setValue(val []byte) *Claim     { c.Value = val; return c }
 func (c *Claim) String() string                 { return claimToString(c) }
 
 func (c *Claim) expireAt() Height {
-	if c.Accepted >= paramExtendedClaimExpirationForkHeight {
+	if c.Accepted+paramOriginalClaimExpirationTime > paramExtendedClaimExpirationForkHeight {
 		return c.Accepted + paramExtendedClaimExpirationTime
 	}
 	return c.Accepted + paramOriginalClaimExpirationTime

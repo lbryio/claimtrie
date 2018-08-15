@@ -20,7 +20,7 @@ const (
 const (
 	DefaultOriginalClaimExpirationTime       Height = 262974
 	DefaultExtendedClaimExpirationTime       Height = 2102400
-	DefaultExtendedClaimExpirationForkHeight Height = 278160
+	DefaultExtendedClaimExpirationForkHeight Height = 400155
 )
 
 var (
