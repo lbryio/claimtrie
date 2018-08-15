@@ -3,6 +3,7 @@ package claimtrie
 import (
 	"bytes"
 	"encoding/gob"
+	"sync"
 
 	"github.com/lbryio/claimtrie/claim"
 	"github.com/lbryio/claimtrie/trie"
@@ -35,6 +36,8 @@ type Commit struct {
 
 // CommitMgr ...
 type CommitMgr struct {
+	sync.RWMutex
+
 	db      *leveldb.DB
 	commits []*Commit
 	head    *Commit
@@ -53,6 +56,8 @@ func NewCommitMgr(db *leveldb.DB) *CommitMgr {
 
 // Head ...
 func (cm *CommitMgr) Head() *Commit {
+	cm.RLock()
+	defer cm.RUnlock()
 	return cm.head
 }
 
@@ -61,6 +66,8 @@ func (cm *CommitMgr) Commit(ht claim.Height, merkle *chainhash.Hash) {
 	if ht == 0 {
 		return
 	}
+	cm.Lock()
+	defer cm.Unlock()
 	c := newCommit(cm.head, CommitMeta{ht}, merkle)
 	cm.commits = append(cm.commits, c)
 	cm.head = c
@@ -68,6 +75,8 @@ func (cm *CommitMgr) Commit(ht claim.Height, merkle *chainhash.Hash) {
 
 // Reset ...
 func (cm *CommitMgr) Reset(ht claim.Height) {
+	cm.Lock()
+	defer cm.Unlock()
 	for i := len(cm.commits) - 1; i >= 0; i-- {
 		c := cm.commits[i]
 		if c.Meta.Height <= ht {
@@ -84,6 +93,8 @@ func (cm *CommitMgr) Reset(ht claim.Height) {
 
 // Save ...
 func (cm *CommitMgr) Save() error {
+	cm.Lock()
+	defer cm.Unlock()
 	exported := struct {
 		Commits []*Commit
 		Head    *Commit
@@ -104,13 +115,17 @@ func (cm *CommitMgr) Save() error {
 
 // Load ...
 func (cm *CommitMgr) Load() error {
+	cm.Lock()
+	defer cm.Unlock()
 	exported := struct {
 		Commits []*Commit
 		Head    *Commit
 	}{}
 
 	data, err := cm.db.Get([]byte("CommitMgr"), nil)
-	if err != nil {
+	if err == leveldb.ErrNotFound {
+		return nil
+	} else if err != nil {
 		return errors.Wrapf(err, "db.Get(CommitMgr)")
 	}
 	if err := gob.NewDecoder(bytes.NewBuffer(data)).Decode(&exported); err != nil {
@@ -123,6 +138,8 @@ func (cm *CommitMgr) Load() error {
 
 // Log ...
 func (cm *CommitMgr) Log(ht claim.Height, visit CommitVisit) {
+	cm.RLock()
+	defer cm.RUnlock()
 	for i := len(cm.commits) - 1; i >= 0; i-- {
 		c := cm.commits[i]
 		if c.Meta.Height > ht {
