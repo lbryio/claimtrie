@@ -63,6 +63,9 @@ func New() (*ClaimTrie, error) {
 		tr: tr,
 
 		cleanup: func() error {
+			if err := nm.Save(); err != nil {
+				return errors.Wrapf(err, "nm.Save()")
+			}
 			if err := cm.Save(); err != nil {
 				return errors.Wrapf(err, "cm.Save()")
 			}

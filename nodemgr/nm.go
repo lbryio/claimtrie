@@ -1,6 +1,8 @@
 package nodemgr
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"sort"
 
@@ -39,6 +41,27 @@ func (nm *NodeMgr) Load(ht claim.Height) {
 		name := string(iter.Key())
 		nm.cache[name] = nm.load(name, ht)
 	}
+	data, err := nm.db.Get([]byte("nextUpdates"), nil)
+	if err == leveldb.ErrNotFound {
+		return
+	} else if err != nil {
+		panic(err)
+	}
+	if err = gob.NewDecoder(bytes.NewBuffer(data)).Decode(&nm.nextUpdates); err != nil {
+		panic(err)
+	}
+}
+
+// Save saves the states to the database.
+func (nm *NodeMgr) Save() error {
+	buf := bytes.NewBuffer(nil)
+	if err := gob.NewEncoder(buf).Encode(nm.nextUpdates); err != nil {
+		return errors.Wrapf(err, "gob.Encode()")
+	}
+	if err := nm.db.Put([]byte("nextUpdates"), buf.Bytes(), nil); err != nil {
+		return errors.Wrapf(err, "db.Put()")
+	}
+	return nil
 }
 
 // Get returns the latest node with name specified by key.
