@@ -47,7 +47,8 @@ func (c *Claim) expireAt() Height {
 	return c.Accepted + paramOriginalClaimExpirationTime
 }
 
-func isActiveAt(c *Claim, ht Height) bool {
+// IsActiveAt ...
+func IsActiveAt(c *Claim, ht Height) bool {
 	return c != nil && c.ActiveAt <= ht && c.expireAt() > ht
 }
 

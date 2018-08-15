@@ -16,16 +16,21 @@ type Node struct {
 	best     *Claim
 	tookover Height
 
-	claims   list
-	supports list
+	claims   List
+	supports List
 
 	// refer to updateClaim.
-	removed list
+	removed List
 }
 
 // NewNode returns a new Node.
 func NewNode(name string) *Node {
 	return &Node{name: name}
+}
+
+// Name returns the Name where the Node blongs.
+func (n *Node) Name() string {
+	return n.name
 }
 
 // Height returns the current height.
@@ -38,15 +43,30 @@ func (n *Node) BestClaim() *Claim {
 	return n.best
 }
 
+// Tookover returns the the height at when the current BestClaim tookover.
+func (n *Node) Tookover() Height {
+	return n.tookover
+}
+
+// Claims returns the claims at the current height.
+func (n *Node) Claims() List {
+	return n.claims
+}
+
+// Supports returns the supports at the current height.
+func (n *Node) Supports() List {
+	return n.supports
+}
+
 // AddClaim adds a Claim to the Node.
-func (n *Node) AddClaim(op OutPoint, amt Amount) error {
-	if find(byOP(op), n.claims, n.supports) != nil {
+func (n *Node) AddClaim(op OutPoint, amt Amount, val []byte) error {
+	if Find(ByOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
 	accepted := n.height + 1
-	c := New(op, amt).setID(NewID(op)).setAccepted(accepted)
+	c := New(op, amt).setID(NewID(op)).setAccepted(accepted).setValue(val)
 	c.setActiveAt(accepted + calDelay(accepted, n.tookover))
-	if !isActiveAt(n.best, accepted) {
+	if !IsActiveAt(n.best, accepted) {
 		c.setActiveAt(accepted)
 		n.best, n.tookover = c, accepted
 	}
@@ -57,7 +77,7 @@ func (n *Node) AddClaim(op OutPoint, amt Amount) error {
 // SpendClaim spends a Claim in the Node.
 func (n *Node) SpendClaim(op OutPoint) error {
 	var c *Claim
-	if n.claims, c = remove(n.claims, byOP(op)); c == nil {
+	if n.claims, c = Remove(n.claims, ByOP(op)); c == nil {
 		return ErrNotFound
 	}
 	n.removed = append(n.removed, c)
@@ -74,17 +94,17 @@ func (n *Node) SpendClaim(op OutPoint) error {
 //
 // For each block, all the spent claims are kept in n.removed until committed.
 // The paired (spend, update) commands has to happen in the same trasaction.
-func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID) error {
-	if find(byOP(op), n.claims, n.supports) != nil {
+func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID, val []byte) error {
+	if Find(ByOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
 	var c *Claim
-	if n.removed, c = remove(n.removed, byID(id)); c == nil {
+	if n.removed, c = Remove(n.removed, ByID(id)); c == nil {
 		return errors.Wrapf(ErrNotFound, "remove(n.removed, byID(%s)", id)
 	}
 
 	accepted := n.height + 1
-	c.setOutPoint(op).setAmt(amt).setAccepted(accepted)
+	c.setOutPoint(op).setAmt(amt).setAccepted(accepted).setValue(val)
 	c.setActiveAt(accepted + calDelay(accepted, n.tookover))
 	if n.best != nil && n.best.ID == id {
 		c.setActiveAt(n.tookover)
@@ -95,12 +115,12 @@ func (n *Node) UpdateClaim(op OutPoint, amt Amount, id ID) error {
 
 // AddSupport adds a Support to the Node.
 func (n *Node) AddSupport(op OutPoint, amt Amount, id ID) error {
-	if find(byOP(op), n.claims, n.supports) != nil {
+	if Find(ByOP(op), n.claims, n.supports) != nil {
 		return ErrDuplicate
 	}
 	// Accepted by rules. No effects on bidding result though.
 	// It may be spent later.
-	if find(byID(id), n.claims, n.removed) == nil {
+	if Find(ByID(id), n.claims, n.removed) == nil {
 		// fmt.Printf("INFO: can't find suooported claim ID: %s for %s\n", id, n.name)
 	}
 
@@ -117,7 +137,7 @@ func (n *Node) AddSupport(op OutPoint, amt Amount, id ID) error {
 // SpendSupport spends a support in the Node.
 func (n *Node) SpendSupport(op OutPoint) error {
 	var s *Claim
-	if n.supports, s = remove(n.supports, byOP(op)); s != nil {
+	if n.supports, s = Remove(n.supports, ByOP(op)); s != nil {
 		return nil
 	}
 	return ErrNotFound
@@ -147,7 +167,7 @@ func (n *Node) AdjustTo(ht Height) *Node {
 // When no pending updates exist, current height is returned.
 func (n *Node) NextUpdate() Height {
 	next := Height(math.MaxInt32)
-	min := func(l list) Height {
+	min := func(l List) Height {
 		for _, v := range l {
 			exp := v.expireAt()
 			if n.height >= exp {
@@ -187,15 +207,15 @@ func (n *Node) bid() {
 	n.removed = nil
 }
 
-func updateEffectiveAmounts(ht Height, claims, supports list) {
+func updateEffectiveAmounts(ht Height, claims, supports List) {
 	for _, c := range claims {
 		c.EffAmt = 0
-		if !isActiveAt(c, ht) {
+		if !IsActiveAt(c, ht) {
 			continue
 		}
 		c.EffAmt = c.Amt
 		for _, s := range supports {
-			if !isActiveAt(s, ht) || s.ID != c.ID {
+			if !IsActiveAt(s, ht) || s.ID != c.ID {
 				continue
 			}
 			c.EffAmt += s.Amt
@@ -203,7 +223,7 @@ func updateEffectiveAmounts(ht Height, claims, supports list) {
 	}
 }
 
-func updateActiveHeights(n *Node, lists ...list) {
+func updateActiveHeights(n *Node, lists ...List) {
 	for _, l := range lists {
 		for _, v := range l {
 			v.ActiveAt = v.Accepted + calDelay(n.height, n.tookover)
@@ -211,11 +231,11 @@ func updateActiveHeights(n *Node, lists ...list) {
 	}
 }
 
-func findCandiadte(ht Height, claims list) *Claim {
+func findCandiadte(ht Height, claims List) *Claim {
 	var c *Claim
 	for _, v := range claims {
 		switch {
-		case !isActiveAt(v, ht):
+		case !IsActiveAt(v, ht):
 			continue
 		case c == nil:
 			c = v

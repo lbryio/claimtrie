@@ -17,8 +17,8 @@ func export(n *Node) interface{} {
 		Tookover   Height
 		NextUpdate Height
 		BestClaim  *Claim
-		Claims     list
-		Supports   list
+		Claims     List
+		Supports   List
 	}{
 		Height:     n.height,
 		Hash:       hash,

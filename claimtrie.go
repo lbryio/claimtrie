@@ -3,6 +3,7 @@ package claimtrie
 import (
 	"fmt"
 
+	"github.com/lbryio/claimtrie/cfg"
 	"github.com/lbryio/claimtrie/change"
 	"github.com/lbryio/claimtrie/claim"
 	"github.com/lbryio/claimtrie/nodemgr"
@@ -18,41 +19,71 @@ type ClaimTrie struct {
 	cm *CommitMgr
 	nm *nodemgr.NodeMgr
 	tr *trie.Trie
+
+	cleanup func() error
 }
 
 // New returns a ClaimTrie.
-func New(dbCommit, dbTrie, dbNodeMgr *leveldb.DB) *ClaimTrie {
-	nm := nodemgr.New(dbNodeMgr)
-	cm := NewCommitMgr(dbCommit)
+func New() (*ClaimTrie, error) {
+	path := cfg.DefaultConfig(cfg.TrieDB)
+	dbTrie, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		return nil, errors.Wrapf(err, "can't open %s", path)
+	}
 
-	return &ClaimTrie{
+	path = cfg.DefaultConfig(cfg.NodeDB)
+	dbNodeMgr, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		return nil, errors.Wrapf(err, "can't open %s", path)
+	}
+
+	path = cfg.DefaultConfig(cfg.CommitDB)
+	dbCommit, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		return nil, errors.Wrapf(err, "can't open %s", path)
+	}
+
+	cm := NewCommitMgr(dbCommit)
+	if err := cm.Load(); err != nil {
+		return nil, errors.Wrapf(err, "cm.Load()")
+	}
+	fmt.Printf("%d of commits loaded. Head: %d\n", len(cm.commits), cm.head.Meta.Height)
+
+	nm := nodemgr.New(dbNodeMgr)
+	nm.Load(cm.head.Meta.Height)
+	fmt.Printf("%d of nodes loaded.\n", nm.Size())
+
+	tr := trie.New(nm, dbTrie)
+	tr.SetRoot(cm.Head().MerkleRoot)
+	fmt.Printf("ClaimTrie Root: %s.\n", tr.MerkleHash())
+
+	ct := &ClaimTrie{
 		cm: cm,
 		nm: nm,
-		tr: trie.New(nm, dbTrie),
+		tr: tr,
+
+		cleanup: func() error {
+			if err := cm.Save(); err != nil {
+				return errors.Wrapf(err, "cm.Save()")
+			}
+			if err := dbTrie.Close(); err != nil {
+				return errors.Wrapf(err, "dbTrie.Close()")
+			}
+			if err := dbNodeMgr.Close(); err != nil {
+				return errors.Wrapf(err, "dbNodeMgr.Close()")
+			}
+			if err := dbCommit.Close(); err != nil {
+				return errors.Wrapf(err, "dbCommit.Close()")
+			}
+			return nil
+		},
 	}
+	return ct, nil
 }
 
-// Load loads ClaimTrie, NodeManager, Trie from databases.
-func (ct *ClaimTrie) Load() error {
-	if err := ct.cm.Load(); err != nil {
-		return errors.Wrapf(err, "cm.Load()")
-	}
-	fmt.Printf("%d of commits loaded. Head: %d\n", len(ct.cm.commits), ct.cm.head.Meta.Height)
-
-	ct.nm.Load(ct.Height())
-	fmt.Printf("%d of nodes loaded.\n", ct.nm.Size())
-
-	ct.tr.SetRoot(ct.cm.Head().MerkleRoot)
-	fmt.Printf("Trie root: %s.\n", ct.MerkleHash())
-	return nil
-}
-
-// Save saves ClaimTrie state to database.
-func (ct *ClaimTrie) Save() error {
-	if err := ct.cm.Save(); err != nil {
-		return errors.Wrapf(err, "cm.Save()")
-	}
-	return nil
+// Close saves ClaimTrie state to database.
+func (ct *ClaimTrie) Close() error {
+	return ct.cleanup()
 }
 
 // Height returns the highest height of blocks commited to the ClaimTrie.

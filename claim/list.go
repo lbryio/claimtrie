@@ -1,22 +1,22 @@
 package claim
 
-type list []*Claim
+type List []*Claim
 
-type comparator func(c *Claim) bool
+type Comparator func(c *Claim) bool
 
-func byOP(op OutPoint) comparator {
+func ByOP(op OutPoint) Comparator {
 	return func(c *Claim) bool {
 		return c.OutPoint == op
 	}
 }
 
-func byID(id ID) comparator {
+func ByID(id ID) Comparator {
 	return func(c *Claim) bool {
 		return c.ID == id
 	}
 }
 
-func remove(l list, cmp comparator) (list, *Claim) {
+func Remove(l List, cmp Comparator) (List, *Claim) {
 	last := len(l) - 1
 	for i, v := range l {
 		if !cmp(v) {
@@ -30,7 +30,7 @@ func remove(l list, cmp comparator) (list, *Claim) {
 	return l, nil
 }
 
-func find(cmp comparator, lists ...list) *Claim {
+func Find(cmp Comparator, lists ...List) *Claim {
 	for _, l := range lists {
 		for _, v := range l {
 			if cmp(v) {

@@ -43,7 +43,7 @@ func (nm *NodeMgr) Load(ht claim.Height) {
 
 // Get returns the latest node with name specified by key.
 func (nm *NodeMgr) Get(key []byte) trie.Value {
-	return nm.nodeAt(string(key), nm.height)
+	return nm.NodeAt(string(key), nm.height)
 }
 
 // Reset resets all nodes to specified height.
@@ -66,8 +66,8 @@ func (nm *NodeMgr) load(name string, ht claim.Height) *claim.Node {
 	return NewFromChanges(name, c, ht)
 }
 
-// nodeAt returns the node adjusted to specified height.
-func (nm *NodeMgr) nodeAt(name string, ht claim.Height) *claim.Node {
+// NodeAt returns the node adjusted to specified height.
+func (nm *NodeMgr) NodeAt(name string, ht claim.Height) *claim.Node {
 	n, ok := nm.cache[name]
 	if !ok {
 		n = claim.NewNode(name)
@@ -84,7 +84,7 @@ func (nm *NodeMgr) nodeAt(name string, ht claim.Height) *claim.Node {
 // ModifyNode returns the node adjusted to specified height.
 func (nm *NodeMgr) ModifyNode(name string, chg *change.Change) error {
 	ht := nm.height
-	n := nm.nodeAt(name, ht)
+	n := nm.NodeAt(name, ht)
 	n.AdjustTo(ht)
 	if err := execute(n, chg); err != nil {
 		return errors.Wrapf(err, "claim.execute(n,chg)")
@@ -100,8 +100,20 @@ func (nm *NodeMgr) CatchUp(ht claim.Height, notifier func(key []byte)) {
 	nm.height = ht
 	for name := range nm.nextUpdates[ht] {
 		notifier([]byte(name))
-		if next := nm.nodeAt(name, ht).NextUpdate(); next > ht {
+		if next := nm.NodeAt(name, ht).NextUpdate(); next > ht {
 			nm.nextUpdates.set(name, next)
+		}
+	}
+}
+
+// VisitFunc ...
+type VisitFunc func(n *claim.Node) (stop bool)
+
+// Visit visits every node in the cache with VisiFunc.
+func (nm *NodeMgr) Visit(v VisitFunc) {
+	for _, n := range nm.cache {
+		if v(n) {
+			return
 		}
 	}
 }
@@ -119,7 +131,7 @@ func (nm *NodeMgr) Show(name string, ht claim.Height, dump bool) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		n := nm.nodeAt(name, ht)
+		n := nm.NodeAt(name, ht)
 		if n.BestClaim() == nil {
 			continue
 		}

@@ -150,22 +150,6 @@ func main() {
 			Flags:   []cli.Flag{flagHeight, flagCheck, flagVerbose},
 		},
 		{
-			Name:    "load",
-			Aliases: []string{"ld"},
-			Usage:   "Load nodes from datbase.",
-			Before:  parseArgs,
-			Action:  cmdLoad,
-			Flags:   []cli.Flag{},
-		},
-		{
-			Name:    "save",
-			Aliases: []string{"sv"},
-			Usage:   "Save nodes to datbase.",
-			Before:  parseArgs,
-			Action:  cmdSave,
-			Flags:   []cli.Flag{},
-		},
-		{
 			Name:   "erase",
 			Usage:  "Erase datbase",
 			Before: parseArgs,
@@ -181,28 +165,10 @@ func main() {
 		},
 	}
 
-	path := cfg.DefaultConfig(cfg.TrieDB)
-	dbTrie, err := leveldb.OpenFile(path, nil)
-	if err != nil {
-		log.Fatalf("can't open %s, err: %s\n", path, err)
+	var err error
+	if ct, err = claimtrie.New(); err != nil {
+		log.Fatalf("can'y create ClaimTrie, err: %s", err)
 	}
-	fmt.Printf("opened %q\n", path)
-
-	path = cfg.DefaultConfig(cfg.NodeDB)
-	dbNodeMgr, err := leveldb.OpenFile(path, nil)
-	if err != nil {
-		log.Fatalf("can't open %s, err: %s\n", path, err)
-	}
-	fmt.Printf("opened %q\n", path)
-
-	path = cfg.DefaultConfig(cfg.CommitDB)
-	dbCommit, err := leveldb.OpenFile(path, nil)
-	if err != nil {
-		log.Fatalf("can't open %s, err: %s\n", path, err)
-	}
-	fmt.Printf("opened %q\n", path)
-
-	ct = claimtrie.New(dbCommit, dbTrie, dbNodeMgr)
 	if err := app.Run(os.Args); err != nil {
 		fmt.Printf("error: %s\n", err)
 	}
@@ -283,14 +249,6 @@ func cmdImport(c *cli.Context) error {
 	return nil
 }
 
-func cmdLoad(c *cli.Context) error {
-	return ct.Load()
-}
-
-func cmdSave(c *cli.Context) error {
-	return ct.Save()
-}
-
 func cmdErase(c *cli.Context) error {
 	if err := os.RemoveAll(cfg.DefaultConfig(cfg.CommitDB)); err != nil {
 		return err
@@ -329,8 +287,8 @@ func cmdShell(app *cli.App) {
 			continue
 		}
 		if text == "quit" || text == "q" {
-			if err = ct.Save(); err != nil {
-				fmt.Printf("ct.Save() failed, err: %s\n", err)
+			if err = ct.Close(); err != nil {
+				fmt.Printf("ct.Close() failed, err: %s\n", err)
 			}
 			break
 		}
