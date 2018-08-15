@@ -155,11 +155,11 @@ func execute(n *claim.Node, c *change.Change) error {
 	var err error
 	switch c.Cmd {
 	case change.AddClaim:
-		err = n.AddClaim(c.OP, c.Amt)
+		err = n.AddClaim(c.OP, c.Amt, c.Value)
 	case change.SpendClaim:
 		err = n.SpendClaim(c.OP)
 	case change.UpdateClaim:
-		err = n.UpdateClaim(c.OP, c.Amt, c.ID)
+		err = n.UpdateClaim(c.OP, c.Amt, c.ID, c.Value)
 	case change.AddSupport:
 		err = n.AddSupport(c.OP, c.Amt, c.ID)
 	case change.SpendSupport:

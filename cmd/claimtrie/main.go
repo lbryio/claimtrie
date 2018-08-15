@@ -31,6 +31,7 @@ var (
 	dump    bool
 	verbose bool
 	name    string
+	value   string
 	height  claim.Height
 	amt     claim.Amount
 	op      claim.OutPoint
@@ -45,6 +46,7 @@ var (
 	flagAmount   = cli.Int64Flag{Name: "amount, a", Usage: "Amount", Destination: (*int64)(&amt)}
 	flagHeight   = cli.Int64Flag{Name: "height, ht", Usage: "Height"}
 	flagName     = cli.StringFlag{Name: "name, n", Value: "Hello", Usage: "Name", Destination: &name}
+	flagValue    = cli.StringFlag{Name: "value, val", Value: "{\"I'm Node Value\"}", Usage: "Value", Destination: &value}
 	flagID       = cli.StringFlag{Name: "id", Usage: "Claim ID"}
 	flagOutPoint = cli.StringFlag{Name: "outpoint, op", Usage: "Outpoint. (HASH:INDEX)"}
 )
@@ -207,7 +209,7 @@ func main() {
 }
 
 func cmdAddClaim(c *cli.Context) error {
-	return ct.AddClaim(name, op, amt)
+	return ct.AddClaim(name, op, amt, []byte(value))
 }
 
 func cmdSpendClaim(c *cli.Context) error {
@@ -218,7 +220,7 @@ func cmdUpdateClaim(c *cli.Context) error {
 	if !c.IsSet("id") {
 		return fmt.Errorf("flag id is required")
 	}
-	return ct.UpdateClaim(name, op, amt, id)
+	return ct.UpdateClaim(name, op, amt, id, []byte(value))
 }
 
 func cmdAddSupport(c *cli.Context) error {

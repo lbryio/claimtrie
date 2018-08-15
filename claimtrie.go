@@ -81,8 +81,8 @@ func (ct *ClaimTrie) CommitMgr() *CommitMgr {
 }
 
 // AddClaim adds a Claim to the ClaimTrie.
-func (ct *ClaimTrie) AddClaim(name string, op claim.OutPoint, amt claim.Amount) error {
-	c := change.New(change.AddClaim).SetOP(op).SetAmt(amt)
+func (ct *ClaimTrie) AddClaim(name string, op claim.OutPoint, amt claim.Amount, val []byte) error {
+	c := change.New(change.AddClaim).SetOP(op).SetAmt(amt).SetValue(val)
 	return ct.modify(name, c)
 }
 
@@ -93,8 +93,8 @@ func (ct *ClaimTrie) SpendClaim(name string, op claim.OutPoint) error {
 }
 
 // UpdateClaim updates a Claim in the ClaimTrie.
-func (ct *ClaimTrie) UpdateClaim(name string, op claim.OutPoint, amt claim.Amount, id claim.ID) error {
-	c := change.New(change.UpdateClaim).SetOP(op).SetAmt(amt).SetID(id)
+func (ct *ClaimTrie) UpdateClaim(name string, op claim.OutPoint, amt claim.Amount, id claim.ID, val []byte) error {
+	c := change.New(change.UpdateClaim).SetOP(op).SetAmt(amt).SetID(id).SetValue(val)
 	return ct.modify(name, c)
 }
 

@@ -66,11 +66,11 @@ func apply(ct *ClaimTrie, c *change.Change, verbose bool) error {
 	var err error
 	switch c.Cmd {
 	case change.AddClaim:
-		err = ct.AddClaim(c.Name, c.OP, c.Amt)
+		err = ct.AddClaim(c.Name, c.OP, c.Amt, c.Value)
 	case change.SpendClaim:
 		err = ct.SpendClaim(c.Name, c.OP)
 	case change.UpdateClaim:
-		err = ct.UpdateClaim(c.Name, c.OP, c.Amt, c.ID)
+		err = ct.UpdateClaim(c.Name, c.OP, c.Amt, c.ID, c.Value)
 	case change.AddSupport:
 		err = ct.AddSupport(c.Name, c.OP, c.Amt, c.ID)
 	case change.SpendSupport:

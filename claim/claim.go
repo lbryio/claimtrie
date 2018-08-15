@@ -26,8 +26,8 @@ type Claim struct {
 	ID       ID
 	Amt      Amount
 	Accepted Height
+	Value    []byte
 
-	// Dynamic values.
 	EffAmt   Amount
 	ActiveAt Height
 }
@@ -37,6 +37,7 @@ func (c *Claim) setID(id ID) *Claim             { c.ID = id; return c }
 func (c *Claim) setAmt(amt Amount) *Claim       { c.Amt = amt; return c }
 func (c *Claim) setAccepted(ht Height) *Claim   { c.Accepted = ht; return c }
 func (c *Claim) setActiveAt(ht Height) *Claim   { c.ActiveAt = ht; return c }
+func (c *Claim) setValue(val []byte) *Claim     { c.Value = val; return c }
 func (c *Claim) String() string                 { return claimToString(c) }
 
 func (c *Claim) expireAt() Height {
