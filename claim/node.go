@@ -226,7 +226,13 @@ func updateEffectiveAmounts(ht Height, claims, supports List) {
 func updateActiveHeights(n *Node, lists ...List) {
 	for _, l := range lists {
 		for _, v := range l {
+			if v.ActiveAt < n.height {
+				continue
+			}
 			v.ActiveAt = v.Accepted + calDelay(n.height, n.tookover)
+			if v.ActiveAt < n.height {
+				v.ActiveAt = n.height
+			}
 		}
 	}
 }
