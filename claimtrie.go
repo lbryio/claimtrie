@@ -89,7 +89,7 @@ func (ct *ClaimTrie) Close() error {
 	return ct.cleanup()
 }
 
-// Height returns the highest height of blocks commited to the ClaimTrie.
+// Height returns the highest height of blocks committed to the ClaimTrie.
 func (ct *ClaimTrie) Height() claim.Height {
 	return ct.cm.Head().Meta.Height
 }

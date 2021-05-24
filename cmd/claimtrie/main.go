@@ -40,7 +40,7 @@ var (
 
 var (
 	flagAll      = cli.BoolFlag{Name: "all, a", Usage: "Show all nodes", Destination: &all}
-	flagCheck    = cli.BoolTFlag{Name: "chk, c", Usage: "Check Merkle Hash during importing", Destination: &chk}
+	flagCheck    = cli.BoolFlag{Name: "chk, c", Usage: "Check Merkle Hash during importing", Destination: &chk}
 	flagDump     = cli.BoolFlag{Name: "dump, d", Usage: "Dump cmds", Destination: &dump}
 	flagVerbose  = cli.BoolFlag{Name: "verbose, v", Usage: "Verbose (will be replaced by loglevel)", Destination: &verbose}
 	flagAmount   = cli.Int64Flag{Name: "amount, a", Usage: "Amount", Destination: (*int64)(&amt)}
@@ -62,14 +62,14 @@ func main() {
 	app.Usage = "A CLI tool for LBRY ClaimTrie"
 	app.Version = "0.0.1"
 	app.Action = cli.ShowAppHelp
-	app.Commands = []cli.Command{
+	app.Commands = []*cli.Command{
 		{
 			Name:    "add-claim",
 			Aliases: []string{"ac"},
 			Usage:   "Claim a name.",
 			Before:  parseArgs,
 			Action:  cmdAddClaim,
-			Flags:   []cli.Flag{flagName, flagOutPoint, flagAmount},
+			Flags:   []cli.Flag{&flagName, &flagOutPoint, &flagAmount},
 		},
 		{
 			Name:    "spend-claim",
@@ -77,7 +77,7 @@ func main() {
 			Usage:   "Spend a Claim.",
 			Before:  parseArgs,
 			Action:  cmdSpendClaim,
-			Flags:   []cli.Flag{flagName, flagOutPoint},
+			Flags:   []cli.Flag{&flagName, &flagOutPoint},
 		},
 		{
 			Name:    "update-claim",
@@ -85,7 +85,7 @@ func main() {
 			Usage:   "Update a Claim.",
 			Before:  parseArgs,
 			Action:  cmdUpdateClaim,
-			Flags:   []cli.Flag{flagName, flagOutPoint, flagAmount, flagID},
+			Flags:   []cli.Flag{&flagName, &flagOutPoint, &flagAmount, &flagID},
 		},
 		{
 			Name:    "add-support",
@@ -93,7 +93,7 @@ func main() {
 			Usage:   "Support a Claim.",
 			Before:  parseArgs,
 			Action:  cmdAddSupport,
-			Flags:   []cli.Flag{flagName, flagOutPoint, flagAmount, flagID},
+			Flags:   []cli.Flag{&flagName, &flagOutPoint, &flagAmount, &flagID},
 		},
 		{
 			Name:    "spend-support",
@@ -101,7 +101,7 @@ func main() {
 			Usage:   "Spend a specified Support.",
 			Before:  parseArgs,
 			Action:  cmdSpendSupport,
-			Flags:   []cli.Flag{flagName, flagOutPoint},
+			Flags:   []cli.Flag{&flagName, &flagOutPoint},
 		},
 		{
 			Name:    "show",
@@ -109,7 +109,7 @@ func main() {
 			Usage:   "Show the status of nodes)",
 			Before:  parseArgs,
 			Action:  cmdShow,
-			Flags:   []cli.Flag{flagAll, flagName, flagHeight, flagDump},
+			Flags:   []cli.Flag{&flagAll, &flagName, &flagHeight, &flagDump},
 		},
 		{
 			Name:    "merkle",
@@ -124,7 +124,7 @@ func main() {
 			Usage:   "Commit the current changes to database.",
 			Before:  parseArgs,
 			Action:  cmdCommit,
-			Flags:   []cli.Flag{flagHeight},
+			Flags:   []cli.Flag{&flagHeight},
 		},
 		{
 			Name:    "reset",
@@ -132,7 +132,7 @@ func main() {
 			Usage:   "Reset the Head commit and a specified commit (by Height).",
 			Before:  parseArgs,
 			Action:  cmdReset,
-			Flags:   []cli.Flag{flagHeight},
+			Flags:   []cli.Flag{&flagHeight},
 		},
 		{
 			Name:    "log",
@@ -147,7 +147,7 @@ func main() {
 			Usage:   "Import changes from datbase.",
 			Before:  parseArgs,
 			Action:  cmdImport,
-			Flags:   []cli.Flag{flagHeight, flagCheck, flagVerbose},
+			Flags:   []cli.Flag{&flagHeight, &flagCheck, &flagVerbose},
 		},
 		{
 			Name:   "erase",
@@ -161,7 +161,7 @@ func main() {
 			Aliases: []string{"sh"},
 			Usage:   "Enter interactive mode",
 			Before:  parseArgs,
-			Action:  func(c *cli.Context) { cmdShell(app) },
+			Action:  func(c *cli.Context) error { cmdShell(app); return nil },
 		},
 	}
 

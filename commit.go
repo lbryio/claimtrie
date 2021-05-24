@@ -105,7 +105,7 @@ func (cm *CommitMgr) Save() error {
 
 	buf := bytes.NewBuffer(nil)
 	if err := gob.NewEncoder(buf).Encode(exported); err != nil {
-		return errors.Wrapf(err, "gob.Encode()", err)
+		return errors.Wrapf(err, "gob.Encode(): %s", err)
 	}
 	if err := cm.db.Put([]byte("CommitMgr"), buf.Bytes(), nil); err != nil {
 		return errors.Wrapf(err, "db.Put(CommitMgr)")
@@ -129,7 +129,7 @@ func (cm *CommitMgr) Load() error {
 		return errors.Wrapf(err, "db.Get(CommitMgr)")
 	}
 	if err := gob.NewDecoder(bytes.NewBuffer(data)).Decode(&exported); err != nil {
-		return errors.Wrapf(err, "gob.Encode()", err)
+		return errors.Wrapf(err, "gob.Encode(): %s", err)
 	}
 	cm.commits = exported.Commits
 	cm.head = exported.Head
