@@ -1,3 +1,5 @@
+**This repo is deprecated. See https://github.com/lbryio/chain instead.**
+
 # ClaimTrie
 
 coming soon
